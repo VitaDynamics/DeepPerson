@@ -23,6 +23,15 @@ except ImportError:
     FAISS_AVAILABLE = False
     faiss = None
 
+# FAISS GPU availability detection
+FAISS_GPU_AVAILABLE = False
+if FAISS_AVAILABLE:
+    try:
+        faiss.StandardGpuResources
+        FAISS_GPU_AVAILABLE = True
+    except AttributeError:
+        FAISS_GPU_AVAILABLE = False
+
 # Sklearn imports
 try:
     from sklearn.neighbors import NearestNeighbors
@@ -129,8 +138,8 @@ class FAISSSearcher(SimilaritySearcher):
         else:
             raise ValueError(f"Unsupported metric: {metric}. Use 'cosine', 'euclidean', or 'euclidean_l2'")
 
-        # Try to move to GPU if requested
-        if device.startswith("cuda"):
+        # Try to move to GPU if requested and GPU functions are available
+        if device.startswith("cuda") and FAISS_GPU_AVAILABLE:
             try:
                 # Parse GPU device ID
                 if ":" in device:
@@ -146,6 +155,9 @@ class FAISSSearcher(SimilaritySearcher):
             except Exception as e:
                 logger.warning(f"Failed to move FAISS index to GPU, falling back to CPU: {e}")
                 return cpu_index
+        elif device.startswith("cuda") and not FAISS_GPU_AVAILABLE:
+            logger.warning("CUDA device requested but faiss-gpu not available, using CPU")
+            return cpu_index
         else:
             return cpu_index
 
@@ -293,9 +305,13 @@ class FAISSSearcher(SimilaritySearcher):
             path = Path(path)
             path.mkdir(parents=True, exist_ok=True)
 
-            # Save FAISS index
+            # Save FAISS index (convert from GPU to CPU if needed)
             index_path = path / "index.faiss"
-            faiss.write_index(faiss.index_gpu_to_cpu(self.index) if str(self.device).startswith("cuda") else self.index, str(index_path))
+            if str(self.device).startswith("cuda") and FAISS_GPU_AVAILABLE:
+                index_to_save = faiss.index_gpu_to_cpu(self.index)
+            else:
+                index_to_save = self.index
+            faiss.write_index(index_to_save, str(index_path))
 
             # Save embeddings
             embeddings_path = path / "embeddings.npy"
@@ -347,8 +363,8 @@ class FAISSSearcher(SimilaritySearcher):
 
             cpu_index = faiss.read_index(str(index_path))
 
-            # Move to GPU if needed
-            if self.device.startswith("cuda"):
+            # Move to GPU if needed and GPU functions are available
+            if self.device.startswith("cuda") and FAISS_GPU_AVAILABLE:
                 try:
                     gpu_id = int(self.device.split(":")[1]) if ":" in self.device else 0
                     res = faiss.StandardGpuResources()
@@ -356,6 +372,9 @@ class FAISSSearcher(SimilaritySearcher):
                 except Exception as e:
                     logger.warning(f"Failed to move index to GPU, using CPU: {e}")
                     self.index = cpu_index
+            elif self.device.startswith("cuda") and not FAISS_GPU_AVAILABLE:
+                logger.warning("CUDA device requested but faiss-gpu not available, using CPU")
+                self.index = cpu_index
             else:
                 self.index = cpu_index
 
@@ -369,7 +388,7 @@ class FAISSSearcher(SimilaritySearcher):
             self.subject_ids = metadata["subject_ids"]
             self.metadata_list = metadata["metadata_list"]
 
-            logger.info(f"Loaded FAISS index from {path}: {metadata['total_entries']} entries}")
+            logger.info(f"Loaded FAISS index from {path}: {metadata['total_entries']} entries")
 
 
 class SklearnSearcher(SimilaritySearcher):
@@ -594,7 +613,7 @@ class SklearnSearcher(SimilaritySearcher):
             # Mark model as dirty to trigger rebuild on next search
             self._dirty = True
 
-            logger.info(f"Loaded sklearn index from {path}: {metadata['total_entries']} entries}")
+            logger.info(f"Loaded sklearn index from {path}: {metadata['total_entries']} entries")
 
 
 class DistanceMetrics:

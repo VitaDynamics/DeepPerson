@@ -222,16 +222,8 @@ def load_model(
         try:
             from ..model_manager import get_model_manager
             model_manager = get_model_manager()
-            backbone_dir = model_manager.ensure_backbone_weights()
+            weights_path = model_manager.ensure_backbone_weights("resnet50_circle_dg")
 
-            # Look for .pth files in the backbone directory
-            pth_files = list(backbone_dir.glob("*.pth"))
-            if not pth_files:
-                raise FileNotFoundError(f"No .pth files found in {backbone_dir}")
-
-            # Use the first .pth file found
-            weights_path = pth_files[0]
-            logger.info(f"Using model manager-provided weights: {weights_path}")
 
         except ImportError:
             logger.warning("model_manager not available, falling back to manual weights_path")

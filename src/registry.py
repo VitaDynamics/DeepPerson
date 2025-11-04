@@ -85,7 +85,7 @@ class ModelRegistry:
         resnet50_profile = ModelProfile(
             identifier="resnet50_circle_dg",
             backbone_path=Path("models/resnet50_circle_dg.pth"),
-            feature_dim=2048,
+            feature_dim=512,
             requires_cuda=False,  # Works on CPU, but GPU recommended
             preprocess_config={
                 "mean": [0.485, 0.456, 0.406],
