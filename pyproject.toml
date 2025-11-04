@@ -3,7 +3,7 @@ name = "deep-person"
 version = "0.1.0"
 description = "Person re-identification component for Vbot framework"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 authors = [
     {name = "VitaDynamics", email = "info@vitadynamics.org"}
 ]
@@ -27,140 +27,35 @@ dependencies = [
     "scikit-learn>=1.2.0",
     "tqdm>=4.64.0",
     "gdown>=5.0.0",
+    "ultralytics>=8.3.224",
 ]
 
 [project.optional-dependencies]
 # GPU acceleration (optional)
 faiss-gpu = [
-    "faiss-gpu>=1.7.4",
+    "faiss-gpu-cu12>=1.12.0",
 ]
 
 # CPU fallback
 faiss-cpu = [
-    "faiss-cpu>=1.7.4",
+    "faiss-cpu>=1.12.0",
 ]
 
-# Person detection
-yolo = [
-    "ultralytics>=8.3.224",
-]
 
 # Development dependencies
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
+    "ruff>=0.8.0",
     "mypy>=1.0.0",
 ]
 
 # Full dependencies (all optional features)
 all = [
-    "faiss-gpu>=1.7.4",
+    "faiss-gpu-cu12>=1.12.0",
     "ultralytics>=8.3.224",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
+    "ruff>=0.8.0",
     "mypy>=1.0.0",
-]
-
-[project.urls]
-Homepage = "https://github.com/VitaDynamics/DeepPerson"
-Repository = "https://github.com/VitaDynamics/DeepPerson"
-Issues = "https://github.com/VitaDynamics/DeepPerson/issues"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-include = '\.pyi?$'
-extend-exclude = '''
-/(
-  # directories
-  \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | build
-  | dist
-)/
-'''
-
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 88
-known_first_party = ["components.deep_person"]
-
-[tool.mypy]
-python_version = "3.12"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = true
-disallow_incomplete_defs = true
-check_untyped_defs = true
-disallow_untyped_decorators = true
-no_implicit_optional = true
-warn_redundant_casts = true
-warn_unused_ignores = true
-warn_no_return = true
-warn_unreachable = true
-strict_equality = true
-show_error_codes = true
-
-[[tool.mypy.overrides]]
-module = [
-    "ultralytics.*",
-    "faiss.*",
-    "sklearn.*",
-    "gdown.*",
-]
-ignore_missing_imports = true
-
-[tool.pytest.ini_options]
-minversion = "7.0"
-addopts = "-ra -q --strict-markers --strict-config"
-testpaths = [
-    "tests",
-]
-markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
-]
-filterwarnings = [
-    "error",
-    "ignore::UserWarning",
-    "ignore::DeprecationWarning",
-]
-
-[tool.coverage.run]
-source = ["components/deep_person"]
-omit = [
-    "*/tests/*",
-    "*/__pycache__/*",
-    "*/venv/*",
-    "*/site-packages/*",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod",
 ]
