@@ -15,14 +15,15 @@ import torchvision.transforms as T
 from PIL import Image
 from tqdm import tqdm
 
-from .entities import PersonEmbedding
+from .entities import Modality, PersonEmbedding
+from .interfaces import EmbeddingGenerator
 from .registry import ModelRegistry
 from .utils import get_device_name, normalize_embedding
 
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingPipeline:
+class EmbeddingPipeline(EmbeddingGenerator):
     """
     Pipeline for generating person embeddings from cropped person images.
 
@@ -69,6 +70,20 @@ class EmbeddingPipeline:
             f"EmbeddingPipeline initialized: {model_name} on {device}, "
             f"feature_dim={self.profile.feature_dim}"
         )
+
+    # ==================== EmbeddingGenerator Interface ====================
+
+    @property
+    def feature_dim(self) -> int:
+        """Get the dimensionality of generated embeddings."""
+        return self.profile.feature_dim
+
+    @property
+    def modality(self) -> str:
+        """Get the modality type (always BODY for EmbeddingPipeline)."""
+        return Modality.BODY.value
+
+    # ==================== Private Methods ====================
 
     def _build_preprocessing(self) -> T.Compose:
         """
@@ -183,7 +198,9 @@ class EmbeddingPipeline:
             model_profile_id=self.model_name,
             hardware=get_device_name(self.device),
             timestamp=datetime.now(),
-            source_image_id=source_image_id
+            source_image_id=source_image_id,
+            modality=Modality.BODY,  # Body embeddings only
+            embedding_provider=self.model_name,  # Set provider for tracking
         )
 
         return embedding
@@ -270,7 +287,9 @@ class EmbeddingPipeline:
                     model_profile_id=self.model_name,
                     hardware=get_device_name(self.device),
                     timestamp=datetime.now(),
-                    source_image_id=source_id
+                    source_image_id=source_id,
+                    modality=Modality.BODY,  # Body embeddings only
+                    embedding_provider=self.model_name,  # Set provider for tracking
                 )
 
                 embeddings.append(embedding)

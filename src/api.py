@@ -88,7 +88,165 @@ class DeepPerson:
         # Get registry for threshold lookups
         self.registry = get_registry()
 
+        # Lazy initialization caches (Phase 6: Optimization)
+        self._face_generator_cache: dict[str, Any] = {}  # Key: (model_name, detector_backend)
+        self._storage_manager_cache: dict[str, Any] = {}  # Key: storage_path
+        self._embedding_service_cache: dict[str, Any] = {}  # Key: storage_path
+        self._gallery_api_cache: dict[str, Any] = {}  # Key: storage_path
+
         logger.info("DeepPerson initialized successfully")
+
+    # ==================== Cached Component Access (Phase 6: Optimization) ====================
+
+    def _get_face_generator(
+        self, model_name: str = "Facenet", detector_backend: str = "opencv"
+    ):
+        """
+        Get or create a cached face embedding generator.
+
+        Args:
+            model_name: Face recognition model name
+            detector_backend: Face detector backend
+
+        Returns:
+            Cached or newly created FaceEmbeddingGenerator
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> gen1 = dp._get_face_generator("Facenet", "opencv")
+            >>> gen2 = dp._get_face_generator("Facenet", "opencv")
+            >>> assert gen1 is gen2  # Same instance returned
+        """
+        cache_key = (model_name, detector_backend)
+
+        if cache_key not in self._face_generator_cache:
+            from .face_embeddings import FaceEmbeddingGenerator
+
+            self._face_generator_cache[cache_key] = FaceEmbeddingGenerator(
+                model_name=model_name,
+                detector_backend=detector_backend,
+                enforce_detection=False,
+            )
+            logger.debug(
+                f"Created and cached face generator: {model_name}/{detector_backend}"
+            )
+        else:
+            logger.debug(f"Using cached face generator: {model_name}/{detector_backend}")
+
+        return self._face_generator_cache[cache_key]
+
+    def _get_storage_manager(self, storage_path: Union[str, Path]):
+        """
+        Get or create a cached storage manager.
+
+        Args:
+            storage_path: Path to gallery storage directory
+
+        Returns:
+            Cached or newly created GalleryStorageManager
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> mgr1 = dp._get_storage_manager("galleries/")
+            >>> mgr2 = dp._get_storage_manager("galleries/")
+            >>> assert mgr1 is mgr2  # Same instance returned
+        """
+        from .user_gallery.storage import GalleryStorageManager
+
+        storage_path_str = str(Path(storage_path))
+
+        if storage_path_str not in self._storage_manager_cache:
+            self._storage_manager_cache[storage_path_str] = GalleryStorageManager(
+                Path(storage_path_str)
+            )
+            logger.debug(f"Created and cached storage manager: {storage_path_str}")
+        else:
+            logger.debug(f"Using cached storage manager: {storage_path_str}")
+
+        return self._storage_manager_cache[storage_path_str]
+
+    def _get_embedding_service(self, storage_path: Union[str, Path]):
+        """
+        Get or create a cached embedding generation service.
+
+        Args:
+            storage_path: Path to gallery storage directory
+
+        Returns:
+            Cached or newly created EmbeddingGenerationService
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> svc1 = dp._get_embedding_service("galleries/")
+            >>> svc2 = dp._get_embedding_service("galleries/")
+            >>> assert svc1 is svc2  # Same instance returned
+        """
+        from .user_gallery.services import EmbeddingGenerationService
+
+        storage_path_str = str(Path(storage_path))
+
+        if storage_path_str not in self._embedding_service_cache:
+            storage_manager = self._get_storage_manager(storage_path_str)
+            self._embedding_service_cache[storage_path_str] = EmbeddingGenerationService(
+                storage_manager=storage_manager,
+                model_name=self.model_name,
+                device=str(self.device),
+            )
+            logger.debug(f"Created and cached embedding service: {storage_path_str}")
+        else:
+            logger.debug(f"Using cached embedding service: {storage_path_str}")
+
+        return self._embedding_service_cache[storage_path_str]
+
+    def _get_gallery_api(self, storage_path: Union[str, Path]):
+        """
+        Get or create a cached user gallery API.
+
+        Args:
+            storage_path: Path to gallery storage directory
+
+        Returns:
+            Cached or newly created UserGalleryAPI
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> api1 = dp._get_gallery_api("galleries/")
+            >>> api2 = dp._get_gallery_api("galleries/")
+            >>> assert api1 is api2  # Same instance returned
+        """
+        from .user_gallery.api import UserGalleryAPI
+
+        storage_path_str = str(Path(storage_path))
+
+        if storage_path_str not in self._gallery_api_cache:
+            self._gallery_api_cache[storage_path_str] = UserGalleryAPI(
+                storage_path=storage_path_str
+            )
+            logger.debug(f"Created and cached gallery API: {storage_path_str}")
+        else:
+            logger.debug(f"Using cached gallery API: {storage_path_str}")
+
+        return self._gallery_api_cache[storage_path_str]
+
+    def clear_cache(self):
+        """
+        Clear all cached components.
+
+        Useful when you want to free memory or force recreation of components
+        with different parameters.
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> dp.represent("img.jpg", generate_face_embeddings=True)
+            >>> dp.clear_cache()  # Free face generator from memory
+        """
+        self._face_generator_cache.clear()
+        self._storage_manager_cache.clear()
+        self._embedding_service_cache.clear()
+        self._gallery_api_cache.clear()
+        logger.info("Cleared all component caches")
+
+    # ==================== Public API Methods ====================
 
     def represent(
         self,
@@ -97,11 +255,16 @@ class DeepPerson:
         normalization: Literal["base", "resnet", "circle"] = "resnet",
         batch_size: int = 16,
         confidence_threshold: float = 0.5,
+        generate_face_embeddings: bool = False,
+        face_model_name: str = "Facenet",
+        face_detector_backend: str = "opencv",
+        return_multi_modal: bool = False,
     ) -> Dict[str, Any]:
         """
-        Generate person embeddings from image(s).
+        Generate person embeddings from image(s) with optional multi-modal support.
 
         Detects persons in each image and generates embeddings for all detected subjects.
+        Optionally generates face embeddings for multi-modal fusion capabilities.
 
         Args:
             img_path: Path to image file or list of paths
@@ -109,24 +272,39 @@ class DeepPerson:
             normalization: Normalization method for embeddings ('base', 'resnet', 'circle')
             batch_size: Batch size for embedding generation
             confidence_threshold: Minimum detection confidence threshold
+            generate_face_embeddings: Whether to generate face embeddings (NEW)
+            face_model_name: Face recognition model to use (default: "Facenet") (NEW)
+            face_detector_backend: Face detection backend (default: "opencv") (NEW)
+            return_multi_modal: Return multi-modal PersonEmbedding objects (NEW)
 
         Returns:
             Dictionary containing:
                 - subjects: List of detected persons with embeddings and metadata
                 - warnings: List of warning messages (e.g., no detection)
                 - model_info: Model and hardware information
+                - face_model_info: Face model information (if generate_face_embeddings=True)
 
         Examples:
+            >>> # Basic body-only embeddings (backward compatible)
             >>> result = dp.represent("person.jpg")
             >>> print(f"Detected {len(result['subjects'])} person(s)")
             >>>
-            >>> # Batch processing
-            >>> result = dp.represent(["img1.jpg", "img2.jpg", "img3.jpg"])
-            >>>
-            >>> # Access embeddings
+            >>> # Multi-modal body+face embeddings (NEW)
+            >>> result = dp.represent(
+            ...     "person.jpg",
+            ...     generate_face_embeddings=True,
+            ...     face_model_name="Facenet"
+            ... )
             >>> for subject in result["subjects"]:
-            ...     embedding = subject["embedding"]
-            ...     bbox = subject["metadata"]["bbox"]
+            ...     body_emb = subject["embedding"]  # Body embedding
+            ...     face_emb = subject.get("face_embedding")  # Face embedding (if detected)
+            ...     print(f"Body: {body_emb.shape}, Face: {face_emb.shape if face_emb is not None else 'None'}")
+            >>>
+            >>> # Batch processing with multi-modal
+            >>> result = dp.represent(
+            ...     ["img1.jpg", "img2.jpg"],
+            ...     generate_face_embeddings=True
+            ... )
         """
         # Normalize input to list
         if isinstance(img_path, (str, Path)):
@@ -144,9 +322,28 @@ class DeepPerson:
         else:
             detector = self.detector
 
+        # Get or create cached face embedding generator if needed
+        face_generator = None
+        if generate_face_embeddings:
+            try:
+                # Use cached face generator (Phase 6: Optimization)
+                face_generator = self._get_face_generator(
+                    model_name=face_model_name,
+                    detector_backend=face_detector_backend
+                )
+                logger.info(f"Face embedding generator ready: {face_model_name}")
+            except ImportError as e:
+                warning_msg = (
+                    "DeepFace not available, face embeddings will be skipped. "
+                    "Install with: pip install deepface"
+                )
+                logger.warning(warning_msg)
+                warnings_list = [warning_msg]
+                generate_face_embeddings = False
+
         # Results containers
         all_subjects = []
-        warnings_list = []
+        warnings_list = warnings_list if generate_face_embeddings and not face_generator else []
 
         # Process each image
         for image_path in img_paths:
@@ -182,8 +379,8 @@ class DeepPerson:
             confidences = [det.confidence for det in detections]
             source_ids = [str(image_path)] * len(detections)
 
-            # Generate embeddings (batch processing within image)
-            embeddings: List[PersonEmbedding] = (
+            # Generate body embeddings (batch processing within image)
+            body_embeddings: List[PersonEmbedding] = (
                 self.embedding_pipeline.generate_embeddings_batch(
                     images=cropped_persons,
                     bboxes=bboxes,
@@ -195,8 +392,55 @@ class DeepPerson:
                 )
             )
 
+            # Generate face embeddings if requested
+            face_embeddings = []
+            if generate_face_embeddings and face_generator:
+                try:
+                    face_embeddings = face_generator.generate_embeddings_batch(
+                        images=cropped_persons,
+                        bboxes=bboxes,
+                        confidences=confidences,
+                        normalize_method="base",  # DeepFace handles normalization
+                        source_image_ids=source_ids,
+                        batch_size=batch_size,
+                        show_progress=False,
+                    )
+                    logger.debug(f"Generated {len(face_embeddings)} face embeddings")
+                except Exception as e:
+                    logger.warning(f"Face embedding generation failed: {e}")
+                    face_embeddings = [None] * len(body_embeddings)
+            else:
+                face_embeddings = [None] * len(body_embeddings)
+
+            # Combine body and face embeddings
+            combined_embeddings = []
+            for body_emb, face_emb in zip(body_embeddings, face_embeddings):
+                if face_emb and face_emb.face_embedding is not None:
+                    # Create multi-modal embedding
+                    from .entities import Modality
+                    combined_emb = PersonEmbedding(
+                        embedding_vector=body_emb.embedding_vector,
+                        subject_confidence=body_emb.subject_confidence,
+                        bbox=body_emb.bbox,
+                        normalization=body_emb.normalization,
+                        model_profile_id=body_emb.model_profile_id,
+                        hardware=body_emb.hardware,
+                        timestamp=body_emb.timestamp,
+                        source_image_id=body_emb.source_image_id,
+                        modality=Modality.BODY_FACE,
+                        face_embedding=face_emb.face_embedding,
+                        face_confidence=face_emb.face_confidence,
+                        face_bbox=face_emb.face_bbox,
+                        embedding_provider=body_emb.embedding_provider,
+                        metadata=body_emb.metadata,
+                    )
+                    combined_embeddings.append(combined_emb)
+                else:
+                    # Body-only embedding
+                    combined_embeddings.append(body_emb)
+
             # Package subjects
-            for embedding in embeddings:
+            for embedding in combined_embeddings:
                 subject = {
                     "embedding": embedding.embedding_vector,
                     "metadata": {
@@ -209,8 +453,20 @@ class DeepPerson:
                         if embedding.timestamp
                         else None,
                         "source_image": embedding.source_image_id,
+                        "modality": embedding.modality.value,
                     },
                 }
+
+                # Add face embedding data if available
+                if embedding.has_face_embedding:
+                    subject["face_embedding"] = embedding.face_embedding
+                    subject["metadata"]["face_confidence"] = embedding.face_confidence
+                    subject["metadata"]["face_bbox"] = embedding.face_bbox
+
+                # Optionally return full PersonEmbedding object
+                if return_multi_modal:
+                    subject["person_embedding"] = embedding
+
                 all_subjects.append(subject)
 
         # Build response
@@ -225,9 +481,23 @@ class DeepPerson:
             },
         }
 
+        # Add face model info if face embeddings were generated
+        if generate_face_embeddings and face_generator:
+            response["face_model_info"] = {
+                "name": face_model_name,
+                "detector_backend": face_detector_backend,
+                "feature_dim": face_generator.feature_dim,
+            }
+
+        # Count multi-modal embeddings
+        multi_modal_count = sum(
+            1 for subject in all_subjects if subject.get("face_embedding") is not None
+        )
+
         logger.info(
             f"Processed {len(img_paths)} image(s), "
-            f"generated {len(all_subjects)} embedding(s), "
+            f"generated {len(all_subjects)} embedding(s) "
+            f"({multi_modal_count} multi-modal), "
             f"{len(warnings_list)} warning(s)"
         )
 
@@ -744,11 +1014,9 @@ class DeepPerson:
             ... )
             >>> print(f"Created gallery with {result['total_images']} images")
         """
-        from .user_gallery.api import UserGalleryAPI
-
-        # Initialize user gallery API
+        # Get cached gallery API (Phase 6: Optimization)
         storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = UserGalleryAPI(storage_path=storage_path)
+        gallery_api = self._get_gallery_api(storage_path)
 
         # Create gallery
         result = gallery_api.create_gallery(
@@ -786,10 +1054,9 @@ class DeepPerson:
             >>> gallery_info = dp.get_gallery("user_001")
             >>> print(f"Gallery has {gallery_info['total_images']} images")
         """
-        from .user_gallery.api import UserGalleryAPI
-
+        # Get cached gallery API (Phase 6: Optimization)
         storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = UserGalleryAPI(storage_path=storage_path)
+        gallery_api = self._get_gallery_api(storage_path)
 
         return gallery_api.get_gallery(user_id)
 
@@ -813,10 +1080,9 @@ class DeepPerson:
             >>> galleries = dp.list_galleries(status_filter="ACTIVE")
             >>> print(f"Found {len(galleries)} active galleries")
         """
-        from .user_gallery.api import UserGalleryAPI
-
+        # Get cached gallery API (Phase 6: Optimization)
         storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = UserGalleryAPI(storage_path=storage_path)
+        gallery_api = self._get_gallery_api(storage_path)
 
         return gallery_api.list_galleries(status_filter=status_filter)
 
@@ -842,10 +1108,9 @@ class DeepPerson:
             >>> result = dp.delete_gallery("user_001", permanent=False)
             >>> print(f"Gallery deleted: {result['success']}")
         """
-        from .user_gallery.api import UserGalleryAPI
-
+        # Get cached gallery API (Phase 6: Optimization)
         storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = UserGalleryAPI(storage_path=storage_path)
+        gallery_api = self._get_gallery_api(storage_path)
 
         return gallery_api.delete_gallery(user_id, permanent=permanent)
 
@@ -914,10 +1179,9 @@ class DeepPerson:
             f"(face_embeddings={generate_face_embeddings}, force={force_regenerate})"
         )
 
-        # Initialize components
+        # Get cached components (Phase 6: Optimization)
         storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        storage_manager = GalleryStorageManager(Path(storage_path))
-        embedding_service = EmbeddingGenerationService(storage_manager)
+        embedding_service = self._get_embedding_service(storage_path)
 
         # Generate embeddings
         embeddings, generation_info = embedding_service.generate_embeddings_for_gallery(
@@ -985,12 +1249,9 @@ class DeepPerson:
             >>> print(f"Coverage: {stats['coverage']:.1%}")
             >>> print(f"Average quality: {stats['average_quality_score']:.3f}")
         """
-        from .user_gallery.services import EmbeddingGenerationService
-        from .user_gallery.storage import GalleryStorageManager
-
+        # Get cached embedding service (Phase 6: Optimization)
         storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        storage_manager = GalleryStorageManager(Path(storage_path))
-        embedding_service = EmbeddingGenerationService(storage_manager)
+        embedding_service = self._get_embedding_service(storage_path)
 
         return embedding_service.get_embedding_statistics(user_id)
 
@@ -1057,7 +1318,7 @@ class DeepPerson:
             ...     generate_face_embeddings=False
             ... )
         """
-        from .user_gallery.fusion import FaceEmbeddingGenerator, FusionRetrievalService
+        from .user_gallery.fusion import FusionRetrievalService
         from .user_gallery.search import MultiModalSearcher
         from .user_gallery.utils import format_retrieval_results_for_display
 
@@ -1077,14 +1338,14 @@ class DeepPerson:
                 f"Please create a gallery first using create_gallery() and represent_gallery()."
             )
 
-        # Initialize face embedding generator if needed
+        # Get cached face embedding generator if needed (Phase 6: Optimization)
         face_generator = None
         if generate_face_embeddings:
             try:
-                face_generator = FaceEmbeddingGenerator(
-                    model_name="Facenet", detector_backend="opencv", enforce_detection=False
+                face_generator = self._get_face_generator(
+                    model_name="Facenet", detector_backend="opencv"
                 )
-                logger.debug("Initialized face embedding generator")
+                logger.debug("Using core face embedding generator")
             except ImportError:
                 logger.warning(
                     "DeepFace not available, face embeddings will be skipped. "
@@ -1104,17 +1365,22 @@ class DeepPerson:
             else 0.5,
         )
 
-        # Load gallery searcher
+        # Load gallery searcher (now using dynamic dimensions from models)
         try:
+            # Get dimensions from embedding generators
+            body_dim = self.embedding_pipeline.feature_dim  # Dynamic from model profile
+            face_dim = face_generator.feature_dim if generate_face_embeddings and face_generator else None
+
             searcher = MultiModalSearcher(
-                body_dimension=2048,  # ResNet-50 Circle DG dimension
-                face_dimension=512 if generate_face_embeddings else None,
+                body_dimension=body_dim,  # Dynamic from embedding pipeline
+                face_dimension=face_dim,  # Dynamic from face generator
                 metric="cosine",
                 device=str(self.device),
             )
             searcher.load(gallery_dir)
             logger.info(
-                f"Loaded gallery '{gallery_name}': {searcher.get_user_count()} users"
+                f"Loaded gallery '{gallery_name}': {searcher.get_user_count()} users "
+                f"(body_dim={body_dim}, face_dim={face_dim})"
             )
         except Exception as e:
             raise FileNotFoundError(

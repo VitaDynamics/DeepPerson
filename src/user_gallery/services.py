@@ -511,12 +511,16 @@ class EmbeddingGenerationService:
 
     Handles batch processing of body and face embeddings with quality scoring,
     error handling, and audit trail generation.
+
+    Now uses the enhanced core components with multi-modal support.
     """
 
     def __init__(
         self,
         storage_manager: GalleryStorageManager,
         config: Optional[UserGalleryConfig] = None,
+        model_name: str = "resnet50_circle_dg",
+        device: Optional[str] = None,
     ):
         """
         Initialize embedding generation service.
@@ -524,40 +528,63 @@ class EmbeddingGenerationService:
         Args:
             storage_manager: Gallery storage manager instance
             config: Optional configuration
+            model_name: Body embedding model name (default: "resnet50_circle_dg")
+            device: Device to use ("cuda", "cpu", or None for auto-detection)
         """
         self.storage_manager = storage_manager
         self.config = config if config else UserGalleryConfig()
+        self.model_name = model_name
+        self.device_str = device
 
         # Lazy initialization of embedding generators
         self._body_embedding_pipeline = None
         self._face_embedding_generator = None
+        self._device = None
 
-        logger.info("Initialized EmbeddingGenerationService")
+        logger.info(
+            f"Initialized EmbeddingGenerationService: model={model_name}, device={device or 'auto'}"
+        )
+
+    def _get_device(self):
+        """Get or select device."""
+        if self._device is None:
+            from ..utils import select_device
+            import torch
+
+            if self.device_str:
+                self._device = torch.device(self.device_str)
+            else:
+                self._device = select_device(prefer_cuda=True)
+            logger.debug(f"Selected device: {self._device}")
+        return self._device
 
     def _get_body_embedding_pipeline(self):
-        """Lazy load body embedding pipeline."""
+        """Lazy load body embedding pipeline (now using configurable model)."""
         if self._body_embedding_pipeline is None:
             from ..embeddings import EmbeddingPipeline
-            from ..utils import select_device
 
-            device = select_device(prefer_cuda=True)
+            device = self._get_device()
             self._body_embedding_pipeline = EmbeddingPipeline(
-                model_name="resnet50_circle_dg", device=device
+                model_name=self.model_name,  # Now configurable!
+                device=device
             )
-            logger.debug("Initialized body embedding pipeline")
+            logger.debug(f"Initialized body embedding pipeline: {self.model_name}")
         return self._body_embedding_pipeline
 
     def _get_face_embedding_generator(self):
-        """Lazy load face embedding generator."""
+        """Lazy load face embedding generator (now using core implementation)."""
         if self._face_embedding_generator is None:
-            from .fusion import FaceEmbeddingGenerator
+            # Use core FaceEmbeddingGenerator instead of user_gallery version
+            from ..face_embeddings import FaceEmbeddingGenerator
 
             self._face_embedding_generator = FaceEmbeddingGenerator(
                 model_name=self.config.face_embedding_model,
                 detector_backend=self.config.face_detector_backend,
                 enforce_detection=False,
             )
-            logger.debug("Initialized face embedding generator")
+            logger.debug(
+                f"Initialized core face embedding generator: {self.config.face_embedding_model}"
+            )
         return self._face_embedding_generator
 
     def generate_embeddings_for_gallery(
@@ -678,7 +705,7 @@ class EmbeddingGenerationService:
                     image=image_asset.image_path, detections=[detection]
                 )
 
-                # Generate body embedding
+                # Generate body embedding using core pipeline
                 body_embeddings = body_pipeline.generate_embeddings_batch(
                     images=cropped_persons,
                     bboxes=[detection.bbox],
@@ -696,26 +723,56 @@ class EmbeddingGenerationService:
                     image_asset.processing_status = ProcessingStatus.FAILED
                     continue
 
-                body_embedding_obj = body_embeddings[0]
-                body_embedding = body_embedding_obj.embedding_vector
+                # Get PersonEmbedding with body embedding
+                person_embedding = body_embeddings[0]
 
                 # Generate face embedding if requested
-                face_embedding = None
-                face_confidence = None
-
                 if generate_face_embeddings:
                     try:
                         face_generator = self._get_face_embedding_generator()
-                        face_embedding, face_confidence = (
-                            face_generator.generate_embedding(image_asset.image_path)
+
+                        # Use core FaceEmbeddingGenerator (returns PersonEmbedding)
+                        from PIL import Image
+                        pil_image = Image.open(image_asset.image_path)
+
+                        face_emb_result = face_generator.generate_embedding(
+                            image=pil_image,
+                            bbox=detection.bbox,
+                            confidence=detection.confidence,
+                            source_image_id=image_asset.image_id,
                         )
 
-                        if face_embedding is not None:
+                        # Merge face embedding into person_embedding
+                        if face_emb_result.face_embedding is not None:
+                            from ..entities import Modality, PersonEmbedding
+
+                            person_embedding = PersonEmbedding(
+                                # Body fields
+                                embedding_vector=person_embedding.embedding_vector,
+                                subject_confidence=person_embedding.subject_confidence,
+                                bbox=person_embedding.bbox,
+                                normalization=person_embedding.normalization,
+                                model_profile_id=person_embedding.model_profile_id,
+                                hardware=person_embedding.hardware,
+                                timestamp=person_embedding.timestamp,
+                                source_image_id=person_embedding.source_image_id,
+                                # Multi-modal fields
+                                modality=Modality.BODY_FACE,
+                                face_embedding=face_emb_result.face_embedding,
+                                face_confidence=face_emb_result.face_confidence,
+                                face_bbox=face_emb_result.face_bbox,
+                                # User gallery fields
+                                user_id=user_id,
+                                cluster_id=image_asset.cluster_id,
+                                embedding_provider=self.model_name,
+                                metadata=person_embedding.metadata,
+                            )
+
                             face_embeddings_count += 1
-                            image_asset.face_detection_confidence = face_confidence
+                            image_asset.face_detection_confidence = face_emb_result.face_confidence
                             logger.debug(
                                 f"Generated face embedding for {image_asset.image_id} "
-                                f"(confidence={face_confidence:.3f})"
+                                f"(confidence={face_emb_result.face_confidence:.3f})"
                             )
                         else:
                             logger.debug(
@@ -744,30 +801,34 @@ class EmbeddingGenerationService:
 
                 # Compute quality score
                 quality_score = compute_embedding_quality_score(
-                    embedding=body_embedding,
+                    embedding=person_embedding.embedding_vector,
                     detection_confidence=detection.confidence,
                     normalization_check=True,
                 )
 
-                # Create EmbeddingSet
+                # Convert PersonEmbedding to EmbeddingSet for backward compatibility
                 import uuid
+                from ..entities import person_embedding_to_legacy_embedding_set
 
-                embedding_set = EmbeddingSet(
+                embedding_dict = person_embedding_to_legacy_embedding_set(
+                    person_embedding,
                     embedding_id=f"{user_id}_{uuid.uuid4().hex[:12]}",
                     user_id=user_id,
-                    image_id=image_asset.image_id,
-                    cluster_id=image_asset.cluster_id,
-                    body_embedding=body_embedding,
-                    face_embedding=face_embedding,
-                    embedding_provider="resnet50_circle_dg",
-                    embedding_version="1.0",
-                    quality_score=quality_score,
-                    metadata={
-                        "detection_confidence": detection.confidence,
-                        "face_confidence": face_confidence,
-                        "bbox": detection.bbox,
-                    },
                 )
+
+                # Override quality_score with computed value
+                embedding_dict["quality_score"] = quality_score
+                embedding_dict["image_id"] = image_asset.image_id
+                embedding_dict["cluster_id"] = image_asset.cluster_id
+
+                # Add additional metadata
+                embedding_dict["metadata"].update({
+                    "detection_confidence": detection.confidence,
+                    "face_confidence": person_embedding.face_confidence,
+                    "bbox": detection.bbox,
+                })
+
+                embedding_set = EmbeddingSet(**embedding_dict)
 
                 embedding_sets.append(embedding_set)
                 image_asset.processing_status = ProcessingStatus.COMPLETED
