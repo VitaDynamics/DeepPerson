@@ -649,7 +649,7 @@ class EmbeddingGenerationService:
 
         # Check existing embeddings
         existing_embeddings = self.storage_manager.load_embeddings(user_id)
-        existing_image_ids = {emb.image_id for emb in existing_embeddings}
+        existing_image_ids = {emb.source_image_id for emb in existing_embeddings}
 
         # Filter images to process
         if force_regenerate:

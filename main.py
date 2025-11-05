@@ -75,16 +75,30 @@ def main() -> None:
         f"({emb_result['face_embeddings_generated']} with face)"
     )
 
-    # Step 4: Check gallery information
-    print("\n=== Step 4: Gallery Information ===")
+    # Step 4: Demonstrate verification using the new verify API
+    print("\n=== Step 4: Verify Images ===")
+    # Verify the same image against itself (should return verified=True)
+    verification_result = dp.verify(SAMPLE_IMAGE, SAMPLE_IMAGE)
+    print(f"Self-verification result: {verification_result['verified']}")
+    print(f"Distance: {verification_result['distance']:.4f}")
+    print(f"Threshold: {verification_result['threshold']:.4f}")
+    print(f"Model used: {verification_result['model']}")
+    print(f"Fusion used: {verification_result.get('used_fusion', False)}")
+    if verification_result.get('fusion_score') is not None:
+        print(f"Fusion score: {verification_result['fusion_score']:.4f}")
+    if verification_result.get('warnings'):
+        print(f"Warnings: {verification_result['warnings']}")
+
+    # Step 5: Check gallery information
+    print("\n=== Step 5: Gallery Information ===")
     if dp.gallery_exists("demo_user", gallery_storage_path=GALLERY_STORAGE):
         gallery_info = dp.get_gallery("demo_user", gallery_storage_path=GALLERY_STORAGE)
         print(f"Gallery status: {gallery_info['status']}")
         print(f"Total images: {gallery_info['total_images']}")
         print(f"Modality breakdown: {gallery_info['modality_breakdown']}")
 
-    # Step 5: List all galleries
-    print("\n=== Step 5: List All Galleries ===")
+    # Step 6: List all galleries
+    print("\n=== Step 6: List All Galleries ===")
     all_galleries = dp.list_galleries(gallery_storage_path=GALLERY_STORAGE)
     print(f"Found {len(all_galleries)} gallery/galleries:")
     for gallery in all_galleries:

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Installation and Setup
 ```bash
-# Install in development mode (from Vbot root)
+# Install in development mode (from repository root)
 uv pip install -e .[all]
 
 # Install with specific feature sets
@@ -29,137 +29,210 @@ ruff check src/ tests/
 # Type checking
 mypy src/
 
-# Run tests (when tests directory exists)
+# Run tests
 pytest tests/ -v --tb=short
-pytest tests/unit/test_*.py -v  # Run specific test files
+
+# Run specific test types
+pytest tests/unit/ -v         # Unit tests only
+pytest tests/integration/ -v  # Integration tests only
+pytest tests/contract/ -v     # Contract tests only
+
+# Run specific test file
+pytest tests/unit/test_fusion_scorer.py -v
+
+# Run tests with marker
+pytest -m unit -v
+pytest -m integration -v
+pytest -m slow -v
 ```
 
 ### Running the Application
 ```bash
-# Basic usage example
+# Quick demo (requires back.jpg in repo root)
 python main.py
 
 # Run with specific GPU device
 CUDA_VISIBLE_DEVICES=0 python main.py
+
+# Check GPU availability
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 ```
 
 ## Architecture Overview
 
-DeepPerson is a person re-identification component designed for the Vbot framework. It provides end-to-end person detection, embedding generation, and similarity search capabilities.
+DeepPerson is a person re-identification component for the Vbot framework, implementing a **5-principle architecture** defined in `.specify/memory/constitution.md`:
 
-### Core Components
+### Core Architecture Principles (Constitution v1.0.0)
 
-**Main API (`src/api.py`)**
-- `DeepPerson` class: Primary façade exposing all public functionality
-- Core methods: `represent()`, `verify()`
-- User Gallery methods: `create_gallery()`, `update_gallery()`, `add_images()`, `delete_gallery()`, `list_galleries()`, `represent_gallery()`, `retrieve_from_gallery()`
+**I. Registry Pattern** (`src/registry.py`) - Thread-safe model profile management
+- `ModelRegistry` is the single source of truth for model profiles
+- All model loading routes through the registry with `threading.RLock`
+- Model profiles include: identifier, backbone_path, feature_dim, preprocessing, hardware requirements
 
-**Processing Pipeline**
-1. **Detection** (`src/detectors.py`): YOLO-based person detection with automatic cropping
-2. **Embedding Generation** (`src/embeddings.py`): Feature extraction using deep learning models
-3. **Similarity Search**:
-   - `src/search.py`: FAISS/sklearn-based simple similarity search
-   - `src/user_gallery/search.py`: Multi-modal (body+face) search with fusion
-   - `src/user_gallery/fusion.py`: Fusion-based retrieval service
+**II. Pipeline Pattern** - Sequential processing: Detection → Embedding → Search
+- Person Detection (`src/detectors.py`): YOLO-based with configurable thresholds
+- Feature Extraction (`src/embeddings.py`): ResNet-50 Circle DG generating 2048-dim embeddings
+- Similarity Search (`src/search.py`): FAISS/sklearn with multiple distance metrics (cosine, euclidean, euclidean_l2)
+- Each stage independently testable with clean interfaces
 
-**Model Management**
-- **Registry** (`src/registry.py`): Thread-safe model profile management and caching
-- **Model Manager** (`src/model_manager.py`): Automatic model downloading and caching
-- **Backbones** (`src/backbones/`): Model implementations (ResNet-50 Circle DG)
+**III. Hardware Optimization** - Automatic GPU/CPU detection with graceful fallback
+- CUDA detection and GPU acceleration (~10-50x speedup for embeddings)
+- FAISS GPU acceleration for large galleries (>10K embeddings)
+- Explicit device selection in constructors
+- CPU fully functional as complete fallback
 
-**Utilities** (`src/utils.py`, `src/entities.py`)
-- Device selection and hardware optimization
-- Data structures and validation
-- Gallery serialization/deserialization
+**IV. Gallery System** (`src/user_gallery/`) - Multi-modal (body+face) with fusion retrieval
+- Standardized storage format: `{gallery}_embeddings.npy`, `{gallery}_ids.npy`, `{gallery}_metadata.pkl`, `{gallery}_config.json`
+- BODY and FACE modalities with separate embedding spaces and fusion weights
+- Clustering for appearance variant grouping (robust matching across poses/lighting)
+- All operations idempotent and thread-safe
+
+**V. Production Readiness** - Comprehensive observability and quality
+- Structured logging (DEBUG/INFO/WARNING/ERROR) with contextual information
+- Error handling: specific and actionable, no generic exceptions
+- Performance metrics: embedding time, detection confidence, search latency, gallery scores
+- Test coverage: 80% minimum (90% for critical paths)
+- Type hints required for all public interfaces (mypy strict)
+- Thread safety validation for all shared state
+
+### Main API (`src/api.py`)
+
+**DeepPerson class** - Primary façade for all functionality
+
+Core methods:
+- `represent(img_path, ...)` - Generate person embeddings with multi-modal support
+- `verify(img1, img2, ...)` - Identity verification with configurable distance metrics
+- `create_gallery(user_id, image_paths, ...)` - Create user galleries with metadata
+- `retrieve_from_gallery(probe_image, gallery_name, ...)` - Multi-modal fusion search
+
+Gallery management methods:
+- `update_gallery()`, `add_images()`, `delete_gallery()`, `list_galleries()`
+- `represent_gallery()`, `get_gallery()`, `gallery_exists()`, `recluster_gallery()`
+
+### Key Design Patterns
+
+- **Factory Pattern**: `DetectorFactory` (detectors.py), `SearcherFactory` (search.py)
+- **Registry Pattern**: Centralized model profile management with lazy loading (`registry.py`)
+- **Pipeline Pattern**: Sequential processing with independent testability
+- **Façade Pattern**: `DeepPerson` class orchestrates all functionality
+- **Thread Safety**: All components use `threading.RLock` for concurrent access
 
 ### Data Flow Architecture
 
 ```
-Input Image → Person Detection (YOLO) → Person Cropping → Feature Extraction (ResNet) → Embedding (2048-dim) → Similarity Search/Verification
+Input Image → Detection (YOLO) → Cropping → Feature Extraction (ResNet-50 Circle DG) → 2048-dim Embedding → Similarity Search/Verification
 ```
 
-### Key Design Patterns
-
-- **Factory Pattern**: Used for detectors (`DetectorFactory`) and searchers (`SearcherFactory`)
-- **Registry Pattern**: Centralized model profile management with lazy loading
-- **Pipeline Pattern**: Sequential processing stages in embedding generation
-- **Thread Safety**: All components use `threading.RLock` for concurrent access
+**Multi-modal extension**:
+```
+Body: Detection → Cropping → ResNet-50 → 2048-dim Body Embedding
+Face: Detection → Face Cropping → Face Model → 512-dim Face Embedding
+↓
+Fusion Scoring (Weighted combination: default 0.6 face, 0.4 body)
+```
 
 ## Development Guidelines
 
-### Code Style (from pyproject.toml)
-- **Line length**: 88 characters (Ruff)
-- **Python version**: 3.12+
-- **Import style**: Group imports (stdlib → third-party → local) with Ruff
-- **Type hints**: Required for all public interfaces (mypy strict mode)
-- **Formatter**: Use `ruff format` (replaces Black)
-- **Linter**: Use `ruff check` (replaces flake8, isort, and more)
+### Code Style
+- **Python**: 3.12+
+- **Line length**: 88 characters (ruff)
+- **Type hints**: REQUIRED for all public interfaces (mypy strict mode)
+- **Formatter**: `ruff format`
+- **Linter**: `ruff check` (replaces flake8, isort, pycodestyle)
+- **Import style**: stdlib → third-party → local (auto-formatted by ruff)
 
 ### Project Structure
 ```
 src/
-├── api.py              # Main DeepPerson façade
-├── detectors.py        # Person detection implementations
-├── embeddings.py       # Feature extraction pipeline
-├── search.py           # Similarity search (FAISS/sklearn)
-├── registry.py         # Model profile registry
-├── model_manager.py    # Model download and caching
-├── entities.py         # Data models and validation
-├── utils.py           # Utilities (device, serialization)
-├── backbones/         # Model architectures
-│   └── resnet50_circle_dg.py
-└── user_gallery/      # User Gallery System (internal)
-    ├── api.py         # _UserGalleryAPI (internal, use DeepPerson instead)
-    ├── models.py      # Gallery data models (UserGallery, GalleryImage, etc.)
-    ├── storage.py     # Gallery storage management
-    ├── services.py    # Gallery services (registration, updates, embeddings)
-    ├── search.py      # Multi-modal search
-    ├── fusion.py      # Fusion retrieval
-    ├── clustering.py  # Appearance variant clustering
-    ├── config.py      # Gallery configuration
-    └── utils.py       # Gallery utilities
+├── api.py                    # Main DeepPerson façade
+├── detectors.py              # Person detection (YOLO)
+├── embeddings.py             # Body embedding pipeline
+├── face_embeddings.py        # Face embedding pipeline
+├── search.py                 # Similarity search (FAISS/sklearn)
+├── fusion.py                 # Fusion scoring
+├── registry.py               # Model profile registry
+├── model_manager.py          # Model download/caching
+├── entities.py               # Data models (PersonEmbedding, etc.)
+├── utils.py                  # Device selection, serialization
+├── backbones/
+│   └── resnet50_circle_dg.py # Model implementation
+└── user_gallery/             # Gallery system (multi-modal)
+    ├── api.py                # _UserGalleryAPI (internal)
+    ├── models.py             # Gallery data models
+    ├── storage.py            # Storage management
+    ├── services.py           # Registration, updates, embeddings
+    ├── search.py             # Multi-modal search
+    ├── fusion.py             # Fusion retrieval
+    └── clustering.py         # Appearance variants
+
+tests/
+├── contract/                 # API contract tests
+├── integration/              # End-to-end tests
+└── unit/                     # Component tests
 ```
 
+### Testing Strategy
+**Test Markers**:
+- `@pytest.mark.unit` - Individual component testing
+- `@pytest.mark.integration` - End-to-end pipeline testing
+- `@pytest.mark.slow` - Performance/benchmarking tests
+
+**Coverage Targets**:
+- 80% minimum for core components
+- 90% for critical paths (detection → embedding → search pipeline)
+
+**Running Tests**:
+- All tests: `pytest tests/ -v`
+- By type: `pytest -m unit|integration|slow -v`
+- Specific file: `pytest tests/integration/test_verify_api.py -v`
+
+### Performance Considerations
+- **GPU Acceleration**: Automatic CUDA detection with CPU fallback
+- **Batch Processing**: Configurable batch sizes for embedding generation
+- **Memory Management**: Model caching and cleanup utilities
+- **Search Performance**:
+  - Embedding generation: ~100ms per person (GPU, batch_size=1)
+  - Gallery search: Top-10 results in ~50ms (galleries up to 10K embeddings)
+  - FAISS GPU acceleration for large galleries (>10K embeddings)
+
+## Extension Guide
+
 ### Adding New Models
-1. Implement model in `src/backbones/`
+1. Implement in `src/backbones/your_model.py`
 2. Create `ModelProfile` in `src/registry.py`
-3. Update registry loading logic
-4. Add model weights to model manager
+3. Update registry loading logic in `_load_model_from_profile()`
+4. Add weights to `ModelManager` for automatic download
 
 ### Adding New Detectors
 1. Inherit from `PersonDetector` in `src/detectors.py`
 2. Implement `detect()` and `crop_persons()` methods
 3. Register in `DetectorFactory.create_detector()`
 
-### Testing Strategy
-- **Unit Tests**: Individual component testing
-- **Integration Tests**: End-to-end pipeline testing
-- **Performance Tests**: Benchmarking embedding speed and search accuracy
-- Use pytest markers: `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`
+### Adding New Distance Metrics
+1. Add method to `DistanceMetrics` class in `src/search.py`
+2. Update `compute_distance()` function
+3. Document metric behavior and use cases
 
-## Dependencies and Optional Features
+## Dependencies
 
-### Core Dependencies
-- `torch>=2.0.0`: Deep learning framework
-- `torchvision>=0.15.0`: Vision models and transforms
-- `numpy>=1.24.0`: Numerical computations
-- `pillow>=9.0.0`: Image processing
-- `scikit-learn>=1.2.0`: Machine learning utilities
-- `gdown>=5.0.0`: Model downloading
+### Core
+- `torch>=2.0.0`, `torchvision>=0.15.0` - Deep learning framework
+- `numpy>=1.24.0` - Numerical computations
+- `pillow>=9.0.0` - Image processing
+- `scikit-learn>=1.2.0` - ML utilities
+- `gdown>=5.0.0` - Model downloading
+- `ultralytics>=8.3.224` - YOLO detection
+- `tf-keras>=2.18.0` - Keras integration
 
-### Optional Components
-- **FAISS GPU**: `faiss-gpu>=1.7.4` for accelerated similarity search
-- **FAISS CPU**: `faiss-cpu>=1.7.4` for CPU-based search
-- **YOLO Detection**: `ultralytics>=8.3.224` for person detection
+### Optional
+- `faiss-gpu>=1.12.0` - GPU-accelerated similarity search
+- `faiss-cpu>=1.12.0` - CPU-based similarity search
+- `pytest>=7.0.0`, `pytest-cov>=4.0.0` - Testing
+- `ruff>=0.8.0` - Linting and formatting
+- `mypy>=1.0.0` - Type checking
 
-## Model and Gallery Management
+## Gallery Storage Format
 
-### Automatic Model Handling
-- Models download on first use via `model_manager.py`
-- Cached in local directory for subsequent runs
-- Thread-safe access with registry pattern
-
-### Gallery Storage Format
 ```
 gallery_dir/
 ├── {gallery_name}_embeddings.npy    # Embedding matrix
@@ -168,16 +241,64 @@ gallery_dir/
 └── {gallery_name}_config.json      # Search configuration
 ```
 
-### Performance Considerations
-- **GPU Acceleration**: Automatic CUDA detection with CPU fallback
-- **Batch Processing**: Configurable batch sizes for embedding generation
-- **Memory Management**: Model caching and cleanup utilities
-- **Distance Metrics**: Cosine, Euclidean, Euclidean L2 supported
+**Multi-modal galleries**:
+- Separate embedding spaces for BODY and FACE modalities
+- Fusion weights configurable (default: face=0.6, body=0.4)
+- Clustering groups appearance variants for robust matching
 
-## Recent Changes
-- **Gallery System Consolidation**: Unified to single User Gallery system
-  - Removed old `build_gallery()` and `find()` methods
-  - All gallery operations now through User Gallery API (multi-image, multi-modal support)
-  - `_UserGalleryAPI` made internal - all access through `DeepPerson` class
-  - Simplified defaults: `gallery_storage_path` defaults to `"galleries/"`
-  - New methods: `update_gallery()`, `add_images()`, `gallery_exists()`, `recluster_gallery()`
+## Quick Start Example
+
+```python
+from src.api import DeepPerson
+
+# Initialize (downloads models on first use)
+dp = DeepPerson()
+
+# Generate embeddings
+result = dp.represent("person.jpg")
+for subject in result["subjects"]:
+    print(f"Embedding: {subject['embedding'].shape}")
+
+# Verify identity
+result = dp.verify("person1.jpg", "person2.jpg")
+print(f"Same person: {result['verified']} (distance: {result['distance']:.4f})")
+
+# Create gallery
+dp.create_gallery(
+    user_id="user_001",
+    image_paths=["img1.jpg", "img2.jpg"],
+    modality_hints={"img1.jpg": "BODY", "img2.jpg": "FACE"}
+)
+
+# Generate gallery embeddings
+dp.represent_gallery(user_id="user_001", generate_face_embeddings=True)
+
+# Multi-modal search
+result = dp.retrieve_from_gallery(
+    probe_image_path="unknown.jpg",
+    gallery_name="user_gallery",
+    top_k=10,
+    fusion_weights={"face": 0.6, "body": 0.4}
+)
+```
+
+## Recent Architecture Changes
+
+**Gallery System Consolidation** (Latest):
+- Unified to single User Gallery system
+- Removed old `build_gallery()` and `find()` methods
+- All gallery operations through User Gallery API
+- `_UserGalleryAPI` internal - use `DeepPerson` class
+- Simplified defaults: `gallery_storage_path` defaults to `"galleries/"`
+- New methods: `update_gallery()`, `add_images()`, `gallery_exists()`, `recluster_gallery()`
+
+## Key Files for Understanding
+
+- **`.specify/memory/constitution.md`** - 5 core principles (Registry, Pipeline, Hardware, Gallery, Observability)
+- **`src/api.py`** - Main API, all public methods
+- **`main.py`** - Complete usage examples
+- **`src/registry.py`** - Model profile management
+- **`src/detectors.py`** - Person detection implementations
+- **`src/embeddings.py`** - Body embedding pipeline
+- **`src/search.py`** - Similarity search (FAISS/sklearn)
+- **`src/user_gallery/`** - Multi-modal gallery system
