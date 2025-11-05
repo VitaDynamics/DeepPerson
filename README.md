@@ -122,90 +122,121 @@ result = dp.verify(
 }
 ```
 
-#### `build_gallery(img_paths, subject_ids, ...)`
+#### User Gallery Management
 
-Create searchable gallery from known persons.
+Create and manage user galleries with multiple images per user.
 
 ```python
-# Build gallery
-result = dp.build_gallery(
-    img_paths=["person1.jpg", "person2.jpg"],
-    subject_ids=["person_001", "person_002"],
-    gallery_path="./galleries/staff",
-    gallery_name="employees",
-    distance_metric="cosine",
-    backend="auto",  # "auto", "faiss", "sklearn"
-    batch_size=16,
-    normalization="resnet"
+# Create a user gallery
+result = dp.create_gallery(
+    user_id="user_001",
+    image_paths=["body1.jpg", "body2.jpg", "face1.jpg"],
+    name="John Doe",
+    metadata={"department": "Security"},
+    modality_hints={
+        "body1.jpg": "BODY",
+        "body2.jpg": "BODY",
+        "face1.jpg": "FACE"
+    }
 )
+print(f"Created gallery with {result['total_images']} images")
 
-print(f"Gallery created with {result['processed']} entries")
+# Generate embeddings for the gallery
+emb_result = dp.represent_gallery(
+    user_id="user_001",
+    generate_face_embeddings=True  # Optional: include face embeddings
+)
+print(f"Generated {emb_result['generated_embeddings']} embeddings")
+
+# Update gallery metadata
+dp.update_gallery("user_001", name="John Smith", status="ACTIVE")
+
+# Add more images
+dp.add_images("user_001", ["new_body.jpg"], modality_hints={"new_body.jpg": "BODY"})
+
+# List all galleries
+galleries = dp.list_galleries(status_filter="ACTIVE")
+print(f"Found {len(galleries)} active galleries")
+
+# Check if gallery exists
+if dp.gallery_exists("user_001"):
+    print("Gallery exists")
+
+# Get gallery information
+info = dp.get_gallery("user_001")
+print(f"Gallery has {info['total_images']} images")
+
+# Delete gallery (soft delete)
+dp.delete_gallery("user_001", permanent=False)
 ```
 
-#### `find(img_path, gallery_path, ...)`
+#### Search User Galleries
 
-Search gallery for matching persons.
+Retrieve users using multi-modal fusion search.
 
 ```python
-# Search gallery
-result = dp.find(
-    img_path="unknown.jpg",
-    gallery_path="./galleries/staff",
-    gallery_name="employees",
+# Search gallery with face and body embeddings
+result = dp.retrieve_from_gallery(
+    probe_image_path="unknown_person.jpg",
+    gallery_name="user_gallery",
     top_k=10,
-    distance_metric="cosine",
-    threshold=0.50,  # Optional filter
+    min_score=0.5,  # Minimum fusion score threshold
+    generate_face_embeddings=True,
+    fusion_weights={"face": 0.6, "body": 0.4},  # Optional custom weights
+    include_evidence=True
 )
 
 # Process results
-for match in result["matches"]:
-    print(f"{match['subject_id']}: distance={match['distance']:.4f}")
+for match in result["results"]:
+    print(f"{match['user_id']}: score={match['overall_score']:.3f}")
+    print(f"  Body score: {match['body_score']:.3f}")
+    print(f"  Face score: {match.get('face_score', 'N/A')}")
 ```
 
 ## Advanced Usage
 
-### Gallery Management
+### Gallery Statistics and Management
 
 ```python
-from components.deep_person.utils import load_gallery_index, save_gallery_index
-from components.deep_person.search import SearcherFactory
+# Get detailed gallery statistics
+stats = dp.get_gallery_embedding_stats("user_001")
+print(f"Total embeddings: {stats['total_embeddings']}")
+print(f"Face embeddings: {stats['face_embeddings']}")
+print(f"Coverage: {stats['coverage']:.1%}")
+print(f"Average quality: {stats['average_quality_score']:.3f}")
 
-# Load existing gallery directly
-searcher = load_gallery_index(
-    gallery_dir=Path("./galleries/staff"),
-    gallery_name="employees",
-    backend="faiss",
-    device="cuda"
-)
+# Recluster gallery with different algorithm
+result = dp.recluster_gallery("user_001", algorithm="DBSCAN")
+print(f"Created {result['clusters_created']} clusters")
 
-# Direct search operations
-results = searcher.search(query_embedding, k=5, threshold=0.40)
-
-# Add new embeddings to gallery
-searcher.add_embedding(new_embedding, "person_003", metadata)
-
-# Save updated gallery
-save_gallery_index(
-    searcher=searcher,
-    gallery_dir=Path("./galleries/staff"),
-    gallery_name="employees_updated"
+# Force regenerate all embeddings
+emb_result = dp.represent_gallery(
+    user_id="user_001",
+    generate_face_embeddings=True,
+    force_regenerate=True
 )
 ```
 
-### Custom Search Backends
+### Multi-Modal Embedding Generation
 
 ```python
-# Use specific backend
-searcher = SearcherFactory.create_searcher(
-    backend="faiss",
-    dimension=2048,
-    metric="cosine",
-    device="cuda"
+# Generate both body and face embeddings
+result = dp.represent(
+    img_path="person.jpg",
+    generate_face_embeddings=True,
+    face_model_name="Facenet",
+    face_detector_backend="opencv"
 )
 
-# Search with custom index
-searcher.add_batch(embeddings_matrix, subject_ids, metadata_list)
-results = searcher.search(query_embedding, k=10, threshold=0.30)
+# Access multi-modal data
+for subject in result["subjects"]:
+    body_emb = subject["embedding"]  # Body embedding
+    face_emb = subject.get("face_embedding")  # Face embedding (if detected)
+
+    print(f"Body: {body_emb.shape}")
+    if face_emb is not None:
+        print(f"Face: {face_emb.shape}")
+        print(f"Face confidence: {subject['metadata']['face_confidence']}")
 ```
 
 ### Model Management
