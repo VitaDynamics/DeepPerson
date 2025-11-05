@@ -361,7 +361,7 @@ class ModelRegistry:
             force_reload: Force reload even if cached
 
         Returns:
-            DeepFace model instance (or equivalent face embedding provider)
+            A dictionary containing the configuration for the face model.
 
         Raises:
             ImportError: If DeepFace is not installed
