@@ -365,7 +365,6 @@ class ModelRegistry:
 
         Raises:
             ImportError: If DeepFace is not installed
-            ValueError: If model or detector backend is not supported
         """
         cache_key = (model_name, detector_backend)
 

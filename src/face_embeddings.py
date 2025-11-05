@@ -83,10 +83,12 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         # Cache feature dimension
         self._feature_dim = self.MODEL_DIMENSIONS.get(model_name, 128)
 
-        # Get face model configuration from registry if enabled
+        # Get face model configuration from registry (registers and caches the model)
         from .registry import get_registry
         self._registry = get_registry()
-        self._face_model_config = self._registry.load_face_model(
+        # Note: load_face_model() registers the model configuration but we don't
+        # store the config here since it's only needed by the registry's cache
+        self._registry.load_face_model(
             model_name=model_name,
             detector_backend=detector_backend
         )
@@ -96,40 +98,13 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         )
 
 
-    def _get_deepface(self):
-        """
-        Lazy load DeepFace module (legacy mode).
-
-        Returns:
-            DeepFace module
-
-        Raises:
-            ImportError: If DeepFace is not installed
-        """
-
-        if self._deepface is None:
-            try:
-                from deepface import DeepFace
-
-                self._deepface = DeepFace
-                logger.debug("DeepFace module loaded successfully")
-            except ImportError as e:
-                raise ImportError(
-                    "DeepFace is not installed. Install with: pip install deepface"
-                ) from e
-        return self._deepface
-
     def _get_deepface_config(self) -> dict:
         """
         Get DeepFace configuration for represent() call.
 
         Returns:
             Dictionary with DeepFace parameters
-
-        Raises:
-            RuntimeError: If not using registry mode
         """
-
         # Return configuration from registry
         return {
             "model_name": self._model_name,
