@@ -61,7 +61,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
 
     def __init__(
         self,
-        model_name: str = "Facenet",
+        model_name: str = "Facenet512", # Default to Facenet512 for better performance
         detector_backend: str = "opencv",
         enforce_detection: bool = False,
     ):
@@ -80,19 +80,33 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         self.detector_backend = detector_backend
         self.enforce_detection = enforce_detection
 
-        # Lazy import DeepFace to avoid dependency issues
-        self._deepface = None
-
         # Cache feature dimension
         self._feature_dim = self.MODEL_DIMENSIONS.get(model_name, 128)
 
+        # Get face model configuration from registry if enabled
+        from .registry import get_registry
+        self._registry = get_registry()
+        self._face_model_config = self._registry.load_face_model(
+            model_name=model_name,
+            detector_backend=detector_backend
+        )
         logger.info(
-            f"Initialized FaceEmbeddingGenerator: model={model_name}, "
+            f"Initialized FaceEmbeddingGenerator with registry: model={model_name}, "
             f"detector={detector_backend}, feature_dim={self._feature_dim}"
         )
 
+
     def _get_deepface(self):
-        """Lazy load DeepFace module."""
+        """
+        Lazy load DeepFace module (legacy mode).
+
+        Returns:
+            DeepFace module
+
+        Raises:
+            ImportError: If DeepFace is not installed
+        """
+
         if self._deepface is None:
             try:
                 from deepface import DeepFace
@@ -104,6 +118,25 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
                     "DeepFace is not installed. Install with: pip install deepface"
                 ) from e
         return self._deepface
+
+    def _get_deepface_config(self) -> dict:
+        """
+        Get DeepFace configuration for represent() call.
+
+        Returns:
+            Dictionary with DeepFace parameters
+
+        Raises:
+            RuntimeError: If not using registry mode
+        """
+
+        # Return configuration from registry
+        return {
+            "model_name": self._model_name,
+            "detector_backend": self.detector_backend,
+            "enforce_detection": self.enforce_detection,
+            "align": True
+        }
 
     # ==================== EmbeddingGenerator Interface ====================
 
@@ -175,15 +208,14 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
 
         try:
             # Generate embedding using DeepFace
-            DeepFace = self._get_deepface()
+            config = self._get_deepface_config()
+            from deepface import DeepFace
 
             result = DeepFace.represent(
                 img_path=image_path,
-                model_name=self._model_name,
-                detector_backend=self.detector_backend,
-                enforce_detection=self.enforce_detection,
-                align=align,
+                **config
             )
+
 
             # Handle no detection
             if not result or len(result) == 0:

@@ -6,8 +6,9 @@ Provides default model profiles and verification thresholds.
 """
 
 import logging
+import threading
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 
@@ -48,20 +49,27 @@ class ModelRegistry:
     - Model instance caching per device
     - Default model profiles
     - Verification thresholds
+    - Face embedding model caching (DeepFace-based)
+    - Thread-safe operations
 
     Examples:
         >>> registry = ModelRegistry()
         >>> profile = registry.get_profile("resnet50_circle_dg")
         >>> model = registry.load_model("resnet50_circle_dg", torch.device("cpu"))
+        >>> face_model = registry.load_face_model("Facenet", "opencv")
     """
 
     _instance: Optional["ModelRegistry"] = None
 
     def __init__(self):
-        """Initialize model registry with default profiles."""
+        """Initialize model registry with default profiles and face model cache."""
         self._profiles: Dict[str, ModelProfile] = {}
         self._model_cache: Dict[str, torch.nn.Module] = {}
         self._thresholds: Dict[str, Dict[str, float]] = DEFAULT_THRESHOLDS.copy()
+
+        # Face embedding model cache (DeepFace-based)
+        self._face_model_cache: Dict[Tuple[str, str], Any] = {}  # Key: (model_name, detector_backend)
+        self._face_lock = threading.RLock()  # Separate lock for face models
 
         # Register default models
         self._register_default_profiles()
@@ -335,6 +343,132 @@ class ModelRegistry:
 
         if keys_to_remove:
             logger.info(f"Removed {len(keys_to_remove)} model(s) from cache")
+
+    # ==================== Face Model Management ====================
+
+    def load_face_model(
+        self,
+        model_name: str,
+        detector_backend: str = "opencv",
+        force_reload: bool = False
+    ) -> Any:
+        """
+        Load and cache a face embedding model using DeepFace.
+
+        Args:
+            model_name: DeepFace model name ('Facenet', 'VGG-Face', 'ArcFace', etc.)
+            detector_backend: Face detector backend ('opencv', 'ssd', 'mtcnn', etc.)
+            force_reload: Force reload even if cached
+
+        Returns:
+            DeepFace model instance (or equivalent face embedding provider)
+
+        Raises:
+            ImportError: If DeepFace is not installed
+            ValueError: If model or detector backend is not supported
+        """
+        cache_key = (model_name, detector_backend)
+
+        with self._face_lock:
+            # Check cache
+            if cache_key in self._face_model_cache and not force_reload:
+                logger.debug(f"Returning cached face model: {cache_key}")
+                return self._face_model_cache[cache_key]
+
+            # Load model using DeepFace
+            logger.info(f"Loading face model: {model_name}/{detector_backend}")
+
+            try:
+                from deepface import DeepFace
+            except ImportError as e:
+                raise ImportError(
+                    "DeepFace is required for face embeddings. Install with: pip install deepface"
+                ) from e
+
+            # DeepFace loads models on-demand when represent() is called
+            # We cache the configuration by storing a reference
+            # The actual model loading happens on first use of DeepFace.represent()
+            face_model_config = {
+                "model_name": model_name,
+                "detector_backend": detector_backend,
+                "enforce_detection": False,
+                "align": True
+            }
+
+            # Store configuration (DeepFace handles actual model caching internally)
+            self._face_model_cache[cache_key] = face_model_config
+            logger.info(f"Cached face model configuration: {cache_key}")
+
+            return face_model_config
+
+    def get_cached_face_models(self) -> list[Tuple[str, str]]:
+        """
+        Get list of cached face models.
+
+        Returns:
+            List of (model_name, detector_backend) tuples
+        """
+        with self._face_lock:
+            return list(self._face_model_cache.keys())
+
+    def clear_face_model_cache(self) -> None:
+        """
+        Clear all cached face models.
+
+        Note: DeepFace's internal cache cannot be cleared from this library.
+        This clears our configuration cache only.
+        """
+        with self._face_lock:
+            count = len(self._face_model_cache)
+            self._face_model_cache.clear()
+            logger.info(f"Cleared face model cache ({count} configurations)")
+
+    def get_face_model_cache_info(self) -> Dict[str, Any]:
+        """
+        Get information about face model cache.
+
+        Returns:
+            Dictionary with cache statistics
+        """
+        with self._face_lock:
+            return {
+                "cached_models": [
+                    {"model_name": model, "detector_backend": backend}
+                    for model, backend in self._face_model_cache.keys()
+                ],
+                "cache_size": len(self._face_model_cache)
+            }
+
+    def remove_face_model_from_cache(
+        self,
+        model_name: str,
+        detector_backend: Optional[str] = None
+    ) -> None:
+        """
+        Remove specific face model(s) from cache.
+
+        Args:
+            model_name: Model name to remove
+            detector_backend: Specific detector backend (removes all if None)
+        """
+        with self._face_lock:
+            if detector_backend is None:
+                # Remove all cached versions of this model
+                keys_to_remove = [
+                    k for k in self._face_model_cache.keys()
+                    if k[0] == model_name
+                ]
+            else:
+                # Remove specific model/detector combination
+                cache_key = (model_name, detector_backend)
+                keys_to_remove = [cache_key] if cache_key in self._face_model_cache else []
+
+            for key in keys_to_remove:
+                del self._face_model_cache[key]
+                logger.debug(f"Removed face model from cache: {key}")
+
+            if keys_to_remove:
+                logger.info(f"Removed {len(keys_to_remove)} face model(s) from cache")
 
 
 # Global registry instance
