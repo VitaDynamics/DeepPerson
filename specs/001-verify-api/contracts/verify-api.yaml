@@ -1,0 +1,466 @@
+openapi: 3.0.3
+info:
+  title: DeepPerson Image Verification API
+  description: |
+    Enhanced API for verifying if two images show the same person using multi-modal fusion scoring.
+
+    ## Overview
+
+    The verify API compares two images to determine if they contain the same person. It supports:
+    - **Fusion Scoring**: Combines body and face embeddings for improved accuracy
+    - **Fallback Mode**: Uses body-only comparison when face data unavailable
+    - **Customizable Parameters**: Distance metrics, thresholds, and fusion weights
+
+    ## Fusion Scoring
+
+    When both images have face embeddings, the API uses fusion scoring:
+    - Computes body and face distances separately
+    - Converts distances to similarities (1 - distance)
+    - Combines using weighted average (default 50/50)
+    - Compares fusion score to threshold
+
+    When face embeddings unavailable, falls back to body-only comparison.
+
+  version: 1.0.0
+  contact:
+    name: DeepPerson API Support
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.deepperson.com/v1
+    description: Production server
+
+paths:
+  /verify:
+    post:
+      summary: Verify if two images show the same person
+      description: |
+        Compares two images using multi-modal fusion scoring (body+face) or body-only fallback.
+        Returns detailed verification result with distances, scores, and metadata.
+
+      operationId: verifyImages
+      tags:
+        - Verification
+
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerificationRequest'
+            example:
+              img1_path: "/path/to/image1.jpg"
+              img2_path: "/path/to/image2.jpg"
+              distance_metric: "cosine"
+              threshold: 0.5
+              normalization: "resnet"
+              enforce_detection: true
+
+      responses:
+        '200':
+          description: Verification completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerificationResult'
+              examples:
+                same_person_fusion:
+                  summary: Same person with fusion scoring
+                  value:
+                    verified: true
+                    distance: 0.342
+                    threshold: 0.5
+                    distance_metric: "cosine"
+                    model: "resnet50_circle_dg"
+                    detector_backend: "yolo"
+                    facial_areas:
+                      img1:
+                        x1: 100
+                        y1: 50
+                        x2: 300
+                        y2: 450
+                      img2:
+                        x1: 120
+                        y1: 55
+                        x2: 320
+                        y2: 455
+                    body_distance: 0.342
+                    face_distance: 0.156
+                    fusion_score: 0.751
+                    face_weight: 0.5
+                    body_weight: 0.5
+                    used_fusion: true
+                    modality_available:
+                      body: true
+                      face: true
+
+                different_person_body_only:
+                  summary: Different persons, body-only comparison
+                  value:
+                    verified: false
+                    distance: 0.876
+                    threshold: 0.5
+                    distance_metric: "cosine"
+                    model: "resnet50_circle_dg"
+                    detector_backend: "yolo"
+                    facial_areas:
+                      img1:
+                        x1: 100
+                        y1: 50
+                        x2: 300
+                        y2: 450
+                      img2:
+                        x1: 50
+                        y1: 100
+                        x2: 250
+                        y2: 500
+                    body_distance: 0.876
+                    face_distance: null
+                    fusion_score: null
+                    face_weight: 0.5
+                    body_weight: 0.5
+                    used_fusion: false
+                    modality_available:
+                      body: true
+                      face: false
+                    warnings:
+                      - "Face embedding not available for img2, using body-only comparison"
+
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+        '404':
+          $ref: '#/components/responses/ImageNotFound'
+
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+components:
+  schemas:
+    VerificationRequest:
+      type: object
+      required:
+        - img1_path
+        - img2_path
+      properties:
+        img1_path:
+          type: string
+          description: Path to first image for comparison
+          example: "/data/person1_front.jpg"
+          format: file-path
+
+        img2_path:
+          type: string
+          description: Path to second image for comparison
+          example: "/data/person1_side.jpg"
+          format: file-path
+
+        model_name:
+          type: string
+          description: Override model name (uses instance default if not specified)
+          example: "resnet50_circle_dg"
+          default: null
+
+        detector_backend:
+          type: string
+          description: Override detector backend (uses instance default if not specified)
+          enum: ["yolo", "ultralytics", "fasterrcnn", "torchvision"]
+          example: "yolo"
+          default: null
+
+        distance_metric:
+          type: string
+          description: Distance metric for embedding comparison
+          enum: ["cosine", "euclidean", "euclidean_l2"]
+          example: "cosine"
+          default: "cosine"
+
+        threshold:
+          type: number
+          minimum: 0
+          description: |
+            Custom verification threshold.
+            If not provided, uses model-specific default from registry.
+            - For distance metrics: verified if distance <= threshold
+            - For fusion scores: verified if score >= threshold
+          example: 0.5
+          default: null
+
+        normalization:
+          type: string
+          description: Embedding normalization method
+          enum: ["base", "resnet", "circle"]
+          example: "resnet"
+          default: "resnet"
+
+        enforce_detection:
+          type: boolean
+          description: |
+            If True, raise error when no person detected.
+            If False, return unverified result with warning.
+          example: true
+          default: true
+
+        fusion_weights:
+          type: object
+          description: |
+            Custom fusion weights for body and face modalities.
+            Weights must sum to 1.0.
+            Only used when both images have face embeddings.
+          properties:
+            body:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Weight for body modality
+              example: 0.6
+            face:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Weight for face modality
+              example: 0.4
+          example:
+            body: 0.6
+            face: 0.4
+          default:
+            body: 0.5
+            face: 0.5
+
+    VerificationResult:
+      type: object
+      required:
+        - verified
+        - distance
+        - threshold
+        - distance_metric
+        - model
+        - detector_backend
+        - facial_areas
+        - face_weight
+        - body_weight
+        - used_fusion
+        - modality_available
+      properties:
+        verified:
+          type: boolean
+          description: True if images show same person (distance <= threshold or fusion_score >= threshold)
+          example: true
+
+        distance:
+          type: number
+          minimum: 0
+          description: Body embedding distance between images (alias for body_distance)
+          example: 0.342
+
+        threshold:
+          type: number
+          minimum: 0
+          description: Threshold used for verification
+          example: 0.5
+
+        distance_metric:
+          type: string
+          description: Distance metric used for comparison
+          enum: ["cosine", "euclidean", "euclidean_l2"]
+          example: "cosine"
+
+        model:
+          type: string
+          description: Model name used for embedding generation
+          example: "resnet50_circle_dg"
+
+        detector_backend:
+          type: string
+          description: Detector backend used for person detection
+          enum: ["yolo", "ultralytics", "fasterrcnn", "torchvision"]
+          example: "yolo"
+
+        facial_areas:
+          $ref: '#/components/schemas/FacialAreas'
+
+        body_distance:
+          type: number
+          minimum: 0
+          description: Body embedding distance between images (same as 'distance' field)
+          example: 0.342
+
+        face_distance:
+          type: number
+          nullable: true
+          minimum: 0
+          description: |
+            Face embedding distance between images.
+            Null if face embeddings not available in one or both images.
+          example: 0.156
+
+        fusion_score:
+          type: number
+          nullable: true
+          minimum: 0
+          maximum: 1
+          description: |
+            Combined similarity score from fusion scoring (body+face).
+            Null if fusion scoring not used (body-only fallback).
+          example: 0.751
+
+        face_weight:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Weight applied to face modality in fusion scoring
+          example: 0.5
+
+        body_weight:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Weight applied to body modality in fusion scoring
+          example: 0.5
+
+        used_fusion:
+          type: boolean
+          description: True if fusion scoring was used, False if body-only comparison
+          example: true
+
+        modality_available:
+          $ref: '#/components/schemas/ModalityAvailability'
+
+        warnings:
+          type: array
+          items:
+            type: string
+          description: Warning messages (e.g., missing face, multiple detections)
+          example:
+            - "Multiple persons detected in img1, using primary detection"
+            - "Face embedding not available for img2, using body-only comparison"
+
+    FacialAreas:
+      type: object
+      required:
+        - img1
+        - img2
+      properties:
+        img1:
+          $ref: '#/components/schemas/BoundingBox'
+        img2:
+          $ref: '#/components/schemas/BoundingBox'
+
+    BoundingBox:
+      type: object
+      required:
+        - x1
+        - y1
+        - x2
+        - y2
+      properties:
+        x1:
+          type: number
+          description: Top-left x coordinate
+          example: 100
+
+        y1:
+          type: number
+          description: Top-left y coordinate
+          example: 50
+
+        x2:
+          type: number
+          description: Bottom-right x coordinate
+          example: 300
+
+        y2:
+          type: number
+          description: Bottom-right y coordinate
+          example: 450
+
+    ModalityAvailability:
+      type: object
+      required:
+        - body
+        - face
+      properties:
+        body:
+          type: boolean
+          description: Body embeddings available (always true)
+          example: true
+
+        face:
+          type: boolean
+          description: Face embeddings available
+          example: true
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Bad Request"
+            message: "Invalid distance metric: 'manhattan'. Must be one of: cosine, euclidean, euclidean_l2"
+            code: 400
+
+    ImageNotFound:
+      description: Image file not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Not Found"
+            message: "Image not found: /path/to/nonexistent.jpg"
+            code: 404
+
+    ValidationError:
+      description: Validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "Validation Error"
+            message: "Threshold must be >= 0, got -0.5"
+            code: 422
+
+    NoPersonDetected:
+      description: No person detected in image
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: "No Person Detected"
+            message: "No person detected in image: person.jpg"
+            code: 422
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+        - message
+        - code
+      properties:
+        error:
+          type: string
+          description: Error type
+          example: "Validation Error"
+
+        message:
+          type: string
+          description: Detailed error message
+          example: "Threshold must be >= 0"
+
+        code:
+          type: integer
+          description: HTTP status code
+          example: 422
+
+tags:
+  - name: Verification
+    description: Image verification and identity comparison

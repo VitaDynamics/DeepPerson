@@ -19,6 +19,7 @@ from .embeddings import BodyEmbeddingGenerator
 from .entities import PersonEmbedding
 from .registry import get_registry
 from .search import compute_distance
+from .fusion import FusionScorer
 from .utils import select_device
 
 logger = logging.getLogger(__name__)
@@ -572,6 +573,7 @@ class DeepPerson:
             detector_backend=detector_backend,
             normalization=normalization,
             confidence_threshold=0.5,
+            generate_face_embeddings=True,
         )
 
         # Check for detection issues in first image
@@ -609,6 +611,7 @@ class DeepPerson:
             detector_backend=detector_backend,
             normalization=normalization,
             confidence_threshold=0.5,
+            generate_face_embeddings=True,
         )
 
         # Check for detection issues in second image
@@ -646,14 +649,62 @@ class DeepPerson:
         # Extract embeddings (use first detection from each image)
         embedding1 = result1["subjects"][0]["embedding"]
         embedding2 = result2["subjects"][0]["embedding"]
+        
+        # Extract face embeddings if available
+        face_embedding1 = result1["subjects"][0].get("face_embedding")
+        face_embedding2 = result2["subjects"][0].get("face_embedding")
 
         # Extract facial areas for response
         facial_area1 = result1["subjects"][0]["metadata"]["bbox"]
         facial_area2 = result2["subjects"][0]["metadata"]["bbox"]
 
-        # Compute distance between embeddings
-        distance = compute_distance(embedding1, embedding2, metric=distance_metric)
+        # Initialize fusion scorer
+        fusion_scorer = FusionScorer()
+        
+        # Compute body distance
+        body_distance = compute_distance(embedding1, embedding2, metric=distance_metric)
 
+        # Initialize fusion variables
+        face_distance = None
+        fusion_score = None
+        fusion_metadata = None
+        used_fusion = False
+        modality_available = {"body": True, "face": False}
+        
+        # Check if face embeddings are available for fusion
+        if face_embedding1 is not None and face_embedding2 is not None:
+            try:
+                # Compute face distance
+                face_distance = compute_distance(face_embedding1, face_embedding2, metric=distance_metric)
+                
+                # Convert distances to similarities for fusion scoring (0-1 range, higher = more similar)
+                body_similarity = max(0.0, 1.0 - body_distance)
+                face_similarity = max(0.0, 1.0 - face_distance)
+
+                # Use fusion scoring to get combined similarity
+                fusion_score, fusion_metadata = fusion_scorer.compute_fusion_score(
+                    body_score=body_similarity,
+                    face_score=face_similarity,
+                    body_confidence=1.0,  # Default confidence
+                    face_confidence=1.0,  # Default confidence
+                )
+
+                used_fusion = fusion_metadata["face_used"]
+                modality_available["face"] = True
+                
+                logger.info(
+                    f"Fusion scoring used: body_distance={body_distance:.4f}, "
+                    f"face_distance={face_distance:.4f}, fusion_score={fusion_score:.4f}"
+                )
+                
+            except Exception as e:
+
+                logger.warning(f"Fusion scoring failed, falling back to body-only: {e}")
+                face_distance = None
+                fusion_metadata = None
+        else:
+            print(f": Face embeddings NOT available, using body-only verification")
+        
         # Get threshold (use provided or fetch from registry)
         if threshold is None:
             threshold = self.registry.get_verification_threshold(
@@ -662,24 +713,39 @@ class DeepPerson:
             logger.debug(f"Using default threshold from registry: {threshold}")
 
         # Determine verification result
-        # Lower distance = more similar
-        # Verified if distance <= threshold
-        verified = bool(distance <= threshold)
+        # Always use distance-based comparison for consistency
+        if used_fusion and fusion_score is not None:
+            # Convert fusion score back to distance for threshold comparison
+            fusion_distance = 1.0 - fusion_score
+            verified = bool(fusion_distance <= threshold)
+            logger.info(
+                f"Verification result: {verified} "
+                f"(fusion_score={fusion_score:.4f}, fusion_distance={fusion_distance:.4f}, threshold={threshold:.4f})"
+            )
+        else:
+            verified = bool(body_distance <= threshold)
+            logger.info(
+                f"Verification result: {verified} "
+                f"(body_distance={body_distance:.4f}, threshold={threshold:.4f})"
+            )
 
-        logger.info(
-            f"Verification result: {verified} "
-            f"(distance={distance:.4f}, threshold={threshold:.4f})"
-        )
-
-        # Build response following DeepFace pattern
+        # Build response with enhanced structure
         response = {
             "verified": verified,
-            "distance": float(distance),
+            "distance": float(body_distance),  # Maintain backward compatibility
             "threshold": float(threshold),
             "distance_metric": distance_metric,
             "model": effective_model,
             "detector_backend": detector_backend or self.detector_backend,
             "facial_areas": {"img1": facial_area1, "img2": facial_area2},
+            # Enhanced fusion fields
+            "body_distance": float(body_distance),
+            "face_distance": float(face_distance) if face_distance is not None else None,
+            "fusion_score": float(fusion_score) if fusion_score is not None else None,
+            "face_weight": fusion_metadata.get("face_weight", 0.5) if used_fusion else 0.5,  # Actual weights used
+            "body_weight": fusion_metadata.get("body_weight", 0.5) if used_fusion else 0.5,  # Actual weights used
+            "used_fusion": used_fusion,
+            "modality_available": modality_available,
         }
 
         # Add warnings if any
