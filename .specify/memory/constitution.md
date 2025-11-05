@@ -2,34 +2,29 @@
 Sync Impact Report
 ==================
 
-Version Change: Initial Creation → 1.0.0
+Version Change: 1.0.0 → 1.0.1 (PATCH)
 
 Modified Principles:
-  - N/A (initial creation)
+  - I. Registry Pattern for Model Management (clarified face model support)
 
 Added Sections:
-  - I. Registry Pattern for Model Management (NON-NEGOTIABLE)
-  - II. Pipeline Pattern for Detection → Embedding → Search (NON-NEGOTIABLE)
-  - III. Hardware Optimization with CPU/GPU Fallback (NON-NEGOTIABLE)
-  - IV. Gallery System with Multi-Modal Support (NON-NEGOTIABLE)
-  - V. Production Readiness with Comprehensive Observability (NON-NEGOTIABLE)
-  - Technology & Quality Standards (new section)
-  - Development Workflow (new section)
-  - Governance (expanded from template with detailed procedures)
+  - N/A (clarification only)
 
 Removed Sections:
-  - N/A (initial creation)
+  - N/A (clarification only)
 
 Templates Status:
-  ✅ .specify/templates/plan-template.md - Constitution Check section already present
-  ✅ .specify/templates/spec-template.md - No updates needed (constitution compliant)
-  ✅ .specify/templates/tasks-template.md - Already references constitution principles (Registry, Pipeline, Hardware, Gallery, Observability)
+  ✅ .specify/templates/plan-template.md - No updates needed (already constitution compliant)
+  ✅ .specify/templates/spec-template.md - No updates needed (already constitution compliant)
+  ✅ .specify/templates/tasks-template.md - No updates needed (already references principles)
 
 Deferred Items:
   - N/A (all placeholders filled)
 
 Version Bump Rationale:
-  N/A (initial creation)
+  PATCH: Clarified Registry Pattern principle to explicitly mention face model registry support,
+  reflecting the recent integration of DeepFace-based face embedding models with thread-safe caching
+  in the ModelRegistry class (src/registry.py lines 347-471).
 
 -->
 
@@ -38,9 +33,9 @@ Version Bump Rationale:
 ## Core Principles
 
 ### I. Registry Pattern for Model Management (NON-NEGOTIABLE)
-All model profiles, configurations, and cache management MUST use the Registry pattern with thread-safe access. The `ModelRegistry` class in `src/registry.py` is the single source of truth for model profiles. All model loading, caching, and profile management MUST route through the registry. New models require ModelProfile registration before use. Model profiles MUST include: identifier, backbone_path, feature_dim, preprocessing config, and hardware requirements. Thread safety using `threading.RLock` MUST be enforced for all registry operations.
+All model profiles, configurations, and cache management MUST use the Registry pattern with thread-safe access. The `ModelRegistry` class in `src/registry.py` is the single source of truth for model profiles and embeddings. All model loading, caching, and profile management MUST route through the registry. The registry MUST support both body model profiles (via ModelProfile) and face model configurations (via DeepFace integration) with separate thread-safe caching mechanisms. Body models MUST include: identifier, backbone_path, feature_dim, preprocessing config, and hardware requirements. Face models MUST be cached with thread safety using separate locking (_face_lock). Thread safety using `threading.RLock` MUST be enforced for all registry operations. The registry MUST provide singleton access via get_instance() for global state consistency.
 
-**Rationale**: Centralized model management ensures consistent state across concurrent operations, prevents duplicate model loading, and provides a single point for model profile validation and updates.
+**Rationale**: Centralized model management ensures consistent state across concurrent operations, prevents duplicate model loading, and provides a single point for model profile validation and updates. The face model registry integration enables multi-modal person re-identification by combining body and face embeddings while maintaining thread safety and performance.
 
 ### II. Pipeline Pattern for Detection → Embedding → Search (NON-NEGOTIABLE)
 The processing pipeline MUST follow the sequential pattern: Person Detection (detectors.py) → Feature Extraction (embeddings.py) → Similarity Search (search.py). Each stage MUST be independently testable and composable. The `DeepPerson` façade class orchestrates this pipeline but each component MUST expose clean interfaces for unit testing. The pipeline MUST handle: YOLO person detection with configurable thresholds, ResNet-50 Circle DG embedding generation with normalization options, and FAISS/sklearn similarity search with multiple distance metrics. Pipeline failures at any stage MUST provide clear error propagation without partial state corruption.
@@ -113,4 +108,4 @@ Documentation requirements: All public APIs MUST have docstrings with examples, 
 
 **Guidance Integration**: Development guidance in `CLAUDE.md` MUST align with constitution principles. When principles are updated, all guidance documents MUST be reviewed and updated accordingly.
 
-**Version**: 1.0.0 | **Ratified**: 2025-11-04 | **Last Amended**: 2025-11-05
+**Version**: 1.0.1 | **Ratified**: 2025-11-04 | **Last Amended**: 2025-11-05

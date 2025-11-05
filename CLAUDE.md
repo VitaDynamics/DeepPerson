@@ -62,12 +62,14 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
 DeepPerson is a person re-identification component for the Vbot framework, implementing a **5-principle architecture** defined in `.specify/memory/constitution.md`:
 
-### Core Architecture Principles (Constitution v1.0.0)
+### Core Architecture Principles (Constitution v1.0.1)
 
 **I. Registry Pattern** (`src/registry.py`) - Thread-safe model profile management
-- `ModelRegistry` is the single source of truth for model profiles
-- All model loading routes through the registry with `threading.RLock`
+- `ModelRegistry` is the single source of truth for model profiles and face embeddings
+- Manages both body models (ResNet-50 Circle DG) and face models (DeepFace: Facenet, ArcFace, etc.)
+- All model loading routes through the registry with `threading.RLock` (body) and `_face_lock` (face)
 - Model profiles include: identifier, backbone_path, feature_dim, preprocessing, hardware requirements
+- Singleton access via `get_instance()` for global state consistency
 
 **II. Pipeline Pattern** - Sequential processing: Detection → Embedding → Search
 - Person Detection (`src/detectors.py`): YOLO-based with configurable thresholds
@@ -83,9 +85,11 @@ DeepPerson is a person re-identification component for the Vbot framework, imple
 
 **IV. Gallery System** (`src/user_gallery/`) - Multi-modal (body+face) with fusion retrieval
 - Standardized storage format: `{gallery}_embeddings.npy`, `{gallery}_ids.npy`, `{gallery}_metadata.pkl`, `{gallery}_config.json`
-- BODY and FACE modalities with separate embedding spaces and fusion weights
+- BODY (2048-dim) and FACE (512-dim with Facenet512) modalities with separate embedding spaces
+- Fusion-based retrieval (default: 0.6 face, 0.4 body weights, configurable)
 - Clustering for appearance variant grouping (robust matching across poses/lighting)
 - All operations idempotent and thread-safe
+- Gallery operations: create, update, add_images, retrieve, recluster, delete
 
 **V. Production Readiness** - Comprehensive observability and quality
 - Structured logging (DEBUG/INFO/WARNING/ERROR) with contextual information
@@ -100,9 +104,9 @@ DeepPerson is a person re-identification component for the Vbot framework, imple
 **DeepPerson class** - Primary façade for all functionality
 
 Core methods:
-- `represent(img_path, ...)` - Generate person embeddings with multi-modal support
-- `verify(img1, img2, ...)` - Identity verification with configurable distance metrics
-- `create_gallery(user_id, image_paths, ...)` - Create user galleries with metadata
+- `represent(img_path, ...)` - Generate person embeddings (body and face via DeepFace)
+- `verify(img1, img2, ...)` - Identity verification with multi-modal fusion support
+- `create_gallery(user_id, image_paths, ...)` - Create user galleries with modality hints
 - `retrieve_from_gallery(probe_image, gallery_name, ...)` - Multi-modal fusion search
 
 Gallery management methods:
@@ -125,10 +129,10 @@ Input Image → Detection (YOLO) → Cropping → Feature Extraction (ResNet-50 
 
 **Multi-modal extension**:
 ```
-Body: Detection → Cropping → ResNet-50 → 2048-dim Body Embedding
-Face: Detection → Face Cropping → Face Model → 512-dim Face Embedding
+Body: YOLO Detection → Cropping → ResNet-50 Circle DG → 2048-dim Body Embedding
+Face: Face Detection (OpenCV/SSD/MTcnn) → Cropping → DeepFace Model (Facenet512/etc) → 512-dim Face Embedding
 ↓
-Fusion Scoring (Weighted combination: default 0.6 face, 0.4 body)
+Fusion Scoring (Weighted combination: configurable, default 0.6 face, 0.4 body)
 ```
 
 ## Development Guidelines
@@ -147,12 +151,13 @@ src/
 ├── api.py                    # Main DeepPerson façade
 ├── detectors.py              # Person detection (YOLO)
 ├── embeddings.py             # Body embedding pipeline
-├── face_embeddings.py        # Face embedding pipeline
+├── face_embeddings.py        # Face embedding pipeline (DeepFace integration)
 ├── search.py                 # Similarity search (FAISS/sklearn)
 ├── fusion.py                 # Fusion scoring
-├── registry.py               # Model profile registry
+├── registry.py               # Model profile registry (body + face models)
 ├── model_manager.py          # Model download/caching
 ├── entities.py               # Data models (PersonEmbedding, etc.)
+├── interfaces.py             # Abstract interfaces (EmbeddingGenerator, etc.)
 ├── utils.py                  # Device selection, serialization
 ├── backbones/
 │   └── resnet50_circle_dg.py # Model implementation
@@ -300,5 +305,14 @@ result = dp.retrieve_from_gallery(
 - **`src/registry.py`** - Model profile management
 - **`src/detectors.py`** - Person detection implementations
 - **`src/embeddings.py`** - Body embedding pipeline
+- **`src/face_embeddings.py`** - Face embedding pipeline (DeepFace integration)
 - **`src/search.py`** - Similarity search (FAISS/sklearn)
+- **`src/fusion.py`** - Fusion scoring for multi-modal retrieval
 - **`src/user_gallery/`** - Multi-modal gallery system
+
+## Active Technologies
+- Python 3.12+ + FastAPI, Uvicorn, Pydantic, DeepPerson (local), Python-multipart (001-fastapi-service)
+- External file system (galleries directory), stateless service architecture (001-fastapi-service)
+
+## Recent Changes
+- 001-fastapi-service: Added Python 3.12+ + FastAPI, Uvicorn, Pydantic, DeepPerson (local), Python-multipart
