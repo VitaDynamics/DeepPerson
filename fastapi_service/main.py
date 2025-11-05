@@ -15,10 +15,6 @@ from fastapi_service.config import load_config
 config = load_config()
 app = create_app(config)
 
-# Register health check route
-from fastapi_service.routes.health import router as health_router
-app.include_router(health_router)
-
 
 if __name__ == "__main__":
     # If run directly, start the server

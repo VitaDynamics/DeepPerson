@@ -111,7 +111,7 @@ def _convert_person_embedding(
         embedding=embedding_vector,
         face_embedding=face_embedding,
         metadata=metadata,
-        person_embedding=embedding_dict if metadata_dict.get("return_multi_modal") else None,
+        person_embedding=embedding_dict.get("person_embedding"),
     )
 
 

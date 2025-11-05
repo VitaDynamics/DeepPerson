@@ -5,6 +5,7 @@ Implements Hardware Optimization principle (Constitution Principle III).
 
 import logging
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
@@ -165,3 +166,13 @@ def load_config() -> ServiceConfig:
     )
 
     return config
+
+
+@lru_cache()
+def get_settings() -> ServiceConfig:
+    """Load and cache service configuration.
+
+    Returns:
+        ServiceConfig instance with caching
+    """
+    return load_config()

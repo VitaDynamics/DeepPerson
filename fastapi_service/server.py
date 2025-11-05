@@ -25,11 +25,6 @@ def run_server() -> None:
         logger.info("Creating FastAPI application...")
         app = create_app(config)
 
-        # Register health check route
-        from fastapi_service.routes.health import router as health_router
-        app.include_router(health_router)
-        logger.info("Health check route registered")
-
         # Start Uvicorn server
         logger.info(
             f"Starting Uvicorn server on {config.host}:{config.port} "
