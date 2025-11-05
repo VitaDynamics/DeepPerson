@@ -713,16 +713,16 @@ class DeepPerson:
             logger.debug(f"Using default threshold from registry: {threshold}")
 
         # Determine verification result
-        # Always use distance-based comparison for consistency
+        # Determine verification result
         if used_fusion and fusion_score is not None:
-            # Convert fusion score back to distance for threshold comparison
-            fusion_distance = 1.0 - fusion_score
-            verified = bool(fusion_distance <= threshold)
+            # For fusion scores (similarity), verified if score >= threshold
+            verified = bool(fusion_score >= threshold)
             logger.info(
                 f"Verification result: {verified} "
-                f"(fusion_score={fusion_score:.4f}, fusion_distance={fusion_distance:.4f}, threshold={threshold:.4f})"
+                f"(fusion_score={fusion_score:.4f}, threshold={threshold:.4f})"
             )
         else:
+            # For body distance, verified if distance <= threshold
             verified = bool(body_distance <= threshold)
             logger.info(
                 f"Verification result: {verified} "
