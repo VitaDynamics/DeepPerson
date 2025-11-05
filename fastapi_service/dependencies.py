@@ -33,7 +33,7 @@ def get_deep_person_instance(device: str | None = None) -> DeepPerson:
     if _deep_person_instance is None:
         logger.info(f"Initializing DeepPerson instance with device: {device}")
         _deep_person_instance = DeepPerson(
-            detector_name="yolo",
+            detector_backend="yolo",
             device=device,
         )
         logger.info("DeepPerson instance initialized successfully")

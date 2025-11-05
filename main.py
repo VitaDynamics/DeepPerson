@@ -105,5 +105,46 @@ def main() -> None:
         print(f"  - {gallery['user_id']}: {gallery.get('name', 'N/A')}")
 
 
+def serve_api() -> None:
+    """Serve DeepPerson as an HTTP API using FastAPI.
+
+    This is a simple way to expose all DeepPerson functionality through
+    HTTP endpoints. Access the interactive API documentation at:
+    http://localhost:8000/docs
+
+    The server provides:
+    - POST /represent: Generate person embeddings
+    - POST /verify: Verify person identity
+    - GET /health: Health check and system status
+    """
+    print("=" * 70)
+    print("Starting DeepPerson FastAPI Server")
+    print("=" * 70)
+    print()
+    print("API Documentation: http://localhost:8000/docs")
+    print("Health Check: http://localhost:8000/health")
+    print()
+    print("Available Endpoints:")
+    print("  - POST /represent        : Generate person embeddings")
+    print("  - POST /represent/base64 : Generate embeddings (base64 images)")
+    print("  - POST /verify           : Verify person identity")
+    print("  - POST /verify/base64    : Verify identity (base64 images)")
+    print("  - GET  /health           : Health check and system status")
+    print()
+    print("Press Ctrl+C to stop the server")
+    print("=" * 70)
+    print()
+
+    # Create DeepPerson instance and serve
+    dp = DeepPerson()
+    dp.serve()
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+
+    # Check if user wants to serve the API
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        serve_api()
+    else:
+        main()

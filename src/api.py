@@ -754,6 +754,93 @@ class DeepPerson:
 
         return response
 
+    def serve(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 8000,
+        workers: int = 1,
+        log_level: str = "info",
+        reload: bool = False,
+        gallery_storage_path: Union[str, Path] = "galleries/",
+        enable_cors: bool = True,
+    ) -> None:
+        """
+        Start FastAPI server with DeepPerson API endpoints.
+
+        This method provides a convenient way to serve all DeepPerson functionality
+        through HTTP endpoints using FastAPI and Uvicorn.
+
+        Args:
+            host: Host to bind to (default: "0.0.0.0")
+            port: Port to listen on (default: 8000)
+            workers: Number of worker processes (default: 1)
+            log_level: Logging level (default: "info")
+            reload: Enable auto-reload for development (default: False)
+            gallery_storage_path: Path to gallery storage directory
+            enable_cors: Enable CORS middleware (default: True)
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> # Start server with default settings
+            >>> dp.serve()
+            >>>
+            >>> # Start server with custom settings
+            >>> dp.serve(
+            ...     host="127.0.0.1",
+            ...     port=9000,
+            ...     log_level="debug",
+            ...     workers=2
+            ... )
+        """
+        try:
+            import uvicorn
+        except ImportError:
+            raise ImportError(
+                "uvicorn is required to serve the API. "
+                "Install with: pip install uvicorn"
+            )
+
+        logger.info(
+            f"Starting DeepPerson FastAPI server on {host}:{port} "
+            f"(workers={workers}, reload={reload})"
+        )
+
+        # Set environment variables for configuration
+        import os
+        os.environ["DEEPPERSON_HOST"] = host
+        os.environ["DEEPPERSON_PORT"] = str(port)
+        os.environ["DEEPPERSON_WORKERS"] = str(workers)
+        os.environ["DEEPPERSON_LOG_LEVEL"] = log_level
+        os.environ["DEEPPERSON_GALLERY_STORAGE_PATH"] = str(gallery_storage_path)
+        os.environ["DEEPPERSON_ENABLE_CORS"] = str(enable_cors)
+
+        # Run uvicorn server
+        try:
+            # Import the FastAPI app factory
+            try:
+                from fastapi_service.app import create_app
+                app = create_app()
+            except ImportError:
+                logger.error(
+                    "FastAPI service not found. Make sure fastapi_service module is available."
+                )
+                raise
+
+            # Start the server
+            uvicorn.run(
+                app,
+                host=host,
+                port=port,
+                workers=workers if not reload else 1,  # Reload only works with 1 worker
+                log_level=log_level.lower(),
+                reload=reload,
+                access_log=True,
+            )
+        except KeyboardInterrupt:
+            logger.info("Server stopped by user")
+        except Exception as e:
+            logger.error(f"Server failed to start: {e}", exc_info=True)
+            raise
 
     # ==================== User Gallery Methods ====================
 
