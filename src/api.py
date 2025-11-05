@@ -703,7 +703,7 @@ class DeepPerson:
                 face_distance = None
                 fusion_metadata = None
         else:
-            print(f": Face embeddings NOT available, using body-only verification")
+            logger.info("Face embeddings NOT available, using body-only verification")
         
         # Get threshold (use provided or fetch from registry)
         if threshold is None:
