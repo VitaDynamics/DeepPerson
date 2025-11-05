@@ -1,8 +1,8 @@
 """
-Face embedding generation and multi-modal fusion logic.
+Multi-modal fusion logic for combining body and face embeddings.
 
-This module provides face embedding generation using DeepFace and implements
-confidence-weighted fusion algorithms for combining body and face embeddings.
+This module implements confidence-weighted fusion algorithms for combining
+body and face embeddings in person re-identification tasks.
 """
 
 from __future__ import annotations
@@ -14,172 +14,6 @@ from typing import Any, Optional
 import numpy as np
 
 logger = logging.getLogger(__name__)
-
-
-class FaceEmbeddingGenerator:
-    """
-    Generates face embeddings using DeepFace library.
-
-    Provides face detection, alignment, and embedding generation
-    with automatic fallback handling for failed detections.
-    """
-
-    def __init__(
-        self,
-        model_name: str = "Facenet",
-        detector_backend: str = "opencv",
-        enforce_detection: bool = False,
-    ):
-        """
-        Initialize face embedding generator.
-
-        Args:
-            model_name: DeepFace model to use ('Facenet', 'VGG-Face', 'OpenFace', etc.)
-            detector_backend: Face detector backend ('opencv', 'ssd', 'mtcnn', etc.)
-            enforce_detection: If True, raise error when no face detected
-
-        Examples:
-            >>> generator = FaceEmbeddingGenerator(model_name="Facenet")
-            >>> embedding, confidence = generator.generate_embedding("face.jpg")
-        """
-        self.model_name = model_name
-        self.detector_backend = detector_backend
-        self.enforce_detection = enforce_detection
-
-        # Lazy import DeepFace to avoid dependency issues
-        self._deepface = None
-
-        logger.info(
-            f"Initialized FaceEmbeddingGenerator: model={model_name}, "
-            f"detector={detector_backend}"
-        )
-
-    def _get_deepface(self):
-        """Lazy load DeepFace module."""
-        if self._deepface is None:
-            try:
-                from deepface import DeepFace
-
-                self._deepface = DeepFace
-                logger.debug("DeepFace module loaded successfully")
-            except ImportError as e:
-                raise ImportError(
-                    "DeepFace is not installed. Install with: pip install deepface"
-                ) from e
-        return self._deepface
-
-    def generate_embedding(
-        self, image_path: str | Path, align: bool = True
-    ) -> tuple[Optional[np.ndarray], float]:
-        """
-        Generate face embedding from an image.
-
-        Args:
-            image_path: Path to image file
-            align: Whether to align face before embedding generation
-
-        Returns:
-            Tuple of (embedding_vector, confidence_score)
-            Returns (None, 0.0) if face detection fails and enforce_detection=False
-
-        Raises:
-            ValueError: If face detection fails and enforce_detection=True
-            FileNotFoundError: If image file doesn't exist
-
-        Examples:
-            >>> generator = FaceEmbeddingGenerator()
-            >>> embedding, confidence = generator.generate_embedding("face.jpg")
-            >>> if embedding is not None:
-            ...     print(f"Generated embedding with confidence {confidence:.3f}")
-        """
-        image_path = Path(image_path)
-
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-
-        logger.debug(f"Generating face embedding for {image_path.name}")
-
-        try:
-            DeepFace = self._get_deepface()
-
-            # Generate embedding using DeepFace
-            result = DeepFace.represent(
-                img_path=str(image_path),
-                model_name=self.model_name,
-                detector_backend=self.detector_backend,
-                enforce_detection=self.enforce_detection,
-                align=align,
-            )
-
-            # DeepFace returns a list of face embeddings (one per detected face)
-            if not result or len(result) == 0:
-                logger.warning(f"No face detected in {image_path.name}")
-                if self.enforce_detection:
-                    raise ValueError(f"No face detected in {image_path.name}")
-                return None, 0.0
-
-            # Use first detected face
-            face_data = result[0]
-            embedding = np.array(face_data["embedding"], dtype=np.float32)
-
-            # Extract confidence from facial area if available
-            confidence = 1.0  # Default confidence
-            if "facial_area" in face_data:
-                # DeepFace doesn't directly provide confidence, use detection success as proxy
-                confidence = 0.9  # High confidence if face was detected
-
-            logger.debug(
-                f"Generated face embedding: dim={len(embedding)}, confidence={confidence:.3f}"
-            )
-
-            return embedding, confidence
-
-        except ValueError as e:
-            # Face detection failed
-            logger.warning(f"Face detection failed for {image_path.name}: {e}")
-            if self.enforce_detection:
-                raise
-            return None, 0.0
-
-        except Exception as e:
-            logger.error(f"Error generating face embedding for {image_path.name}: {e}")
-            if self.enforce_detection:
-                raise
-            return None, 0.0
-
-    def generate_embeddings_batch(
-        self, image_paths: list[str | Path], align: bool = True
-    ) -> list[tuple[Optional[np.ndarray], float]]:
-        """
-        Generate face embeddings for multiple images.
-
-        Args:
-            image_paths: List of image file paths
-            align: Whether to align faces before embedding generation
-
-        Returns:
-            List of (embedding_vector, confidence_score) tuples
-
-        Examples:
-            >>> generator = FaceEmbeddingGenerator()
-            >>> results = generator.generate_embeddings_batch(["face1.jpg", "face2.jpg"])
-            >>> for i, (emb, conf) in enumerate(results):
-            ...     if emb is not None:
-            ...         print(f"Image {i}: embedding generated with confidence {conf:.3f}")
-        """
-        logger.info(f"Generating face embeddings for {len(image_paths)} images")
-
-        results = []
-        for image_path in image_paths:
-            embedding, confidence = self.generate_embedding(image_path, align=align)
-            results.append((embedding, confidence))
-
-        successful = sum(1 for emb, _ in results if emb is not None)
-        logger.info(
-            f"Face embedding generation complete: {successful}/{len(image_paths)} successful"
-        )
-
-        return results
 
 
 class FusionScorer:
@@ -397,57 +231,6 @@ class FusionScorer:
         return np.array(fused_scores), metadata_list
 
 
-def compute_embedding_quality_score(
-    embedding: np.ndarray,
-    detection_confidence: float = 1.0,
-    normalization_check: bool = True,
-) -> float:
-    """
-    Compute quality score for an embedding vector.
-
-    Quality is based on:
-    - Detection confidence
-    - Embedding norm (should be close to 1.0 if normalized)
-    - Embedding variance (should not be too low)
-
-    Args:
-        embedding: Embedding vector
-        detection_confidence: Detection confidence score (0.0-1.0)
-        normalization_check: Whether to check if embedding is normalized
-
-    Returns:
-        Quality score between 0.0 and 1.0
-
-    Examples:
-        >>> embedding = np.random.randn(512)
-        >>> embedding = embedding / np.linalg.norm(embedding)  # Normalize
-        >>> quality = compute_embedding_quality_score(embedding, detection_confidence=0.9)
-        >>> print(f"Embedding quality: {quality:.3f}")
-    """
-    if embedding is None or len(embedding) == 0:
-        return 0.0
-
-    # Start with detection confidence
-    quality = detection_confidence
-
-    # Check normalization
-    if normalization_check:
-        norm = np.linalg.norm(embedding)
-        # Penalize if not normalized (should be close to 1.0)
-        norm_score = 1.0 - min(abs(norm - 1.0), 1.0)
-        quality *= norm_score
-
-    # Check variance (embeddings with very low variance are suspicious)
-    variance = np.var(embedding)
-    if variance < 1e-6:
-        quality *= 0.5  # Penalize low variance
-
-    # Ensure quality is in valid range
-    quality = max(0.0, min(1.0, quality))
-
-    return quality
-
-
 class FusionRetrievalService:
     """
     High-level service for fusion-based user retrieval.
@@ -462,7 +245,7 @@ class FusionRetrievalService:
     def __init__(
         self,
         body_embedding_generator,
-        face_embedding_generator: Optional[FaceEmbeddingGenerator] = None,
+        face_embedding_generator=None,
         fusion_scorer: Optional[FusionScorer] = None,
         default_face_weight: float = 0.5,
         default_body_weight: float = 0.5,
@@ -471,15 +254,16 @@ class FusionRetrievalService:
         Initialize fusion retrieval service.
 
         Args:
-            body_embedding_generator: Generator for body embeddings (e.g., EmbeddingPipeline)
-            face_embedding_generator: Optional generator for face embeddings
+            body_embedding_generator: Generator for body embeddings (e.g., BodyEmbeddingGenerator)
+            face_embedding_generator: Optional generator for face embeddings (from src.face_embeddings)
             fusion_scorer: Optional fusion scorer (creates default if None)
             default_face_weight: Default weight for face modality
             default_body_weight: Default weight for body modality
 
         Examples:
-            >>> from src.embeddings import EmbeddingPipeline
-            >>> body_gen = EmbeddingPipeline(model_name="resnet50_circle_dg")
+            >>> from src.embeddings import BodyEmbeddingGenerator
+            >>> from src.face_embeddings import FaceEmbeddingGenerator
+            >>> body_gen = BodyEmbeddingGenerator(model_name="resnet50_circle_dg")
             >>> face_gen = FaceEmbeddingGenerator(model_name="Facenet")
             >>> service = FusionRetrievalService(body_gen, face_gen)
         """
@@ -544,14 +328,14 @@ class FusionRetrievalService:
         # Generate body embedding
         body_embedding = None
         try:
-            # Use the body embedding generator (EmbeddingPipeline)
+            # Use the body embedding generator (BodyEmbeddingGenerator)
             # This should detect person and generate embedding
             from PIL import Image
 
             img = Image.open(probe_path)
 
             # Generate embedding using the pipeline
-            # Note: This assumes the generator has a method to process single image
+            # FIXME: This assumes the generator has a method to process single image
             # We'll need to adapt based on actual API
             embeddings = self.body_embedding_generator.generate_embeddings_batch(
                 images=[img],
@@ -583,15 +367,32 @@ class FusionRetrievalService:
         face_embedding = None
         if generate_face_embedding and self.face_embedding_generator is not None:
             try:
-                face_embedding, face_confidence = (
-                    self.face_embedding_generator.generate_embedding(probe_path)
-                )
-                metadata["face_confidence"] = face_confidence
+                from PIL import Image
 
-                if face_embedding is not None:
+                # Core FaceEmbeddingGenerator requires PIL Image, bbox, and confidence
+                img = Image.open(probe_path)
+
+                # Use the embeddings[0].bbox if available, otherwise use image dimensions
+                bbox = (0, 0, img.width, img.height)
+                if len(embeddings) > 0 and hasattr(embeddings[0], 'bbox'):
+                    bbox = embeddings[0].bbox
+
+                # Generate face embedding using core implementation
+                face_person_embedding = self.face_embedding_generator.generate_embedding(
+                    image=img,
+                    bbox=bbox,
+                    confidence=metadata["body_confidence"],
+                    source_image_id=str(probe_path),
+                )
+
+                # Extract face embedding and confidence from PersonEmbedding
+                if face_person_embedding.face_embedding is not None:
+                    face_embedding = face_person_embedding.face_embedding
+                    metadata["face_confidence"] = face_person_embedding.face_confidence or 0.0
+
                     logger.debug(
                         f"Generated face embedding: dim={len(face_embedding)}, "
-                        f"confidence={face_confidence:.3f}"
+                        f"confidence={metadata['face_confidence']:.3f}"
                     )
                 else:
                     logger.warning(f"No face detected in probe image: {probe_path.name}")

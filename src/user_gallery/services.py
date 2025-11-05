@@ -134,6 +134,7 @@ class GalleryRegistrationService:
             raise ValueError("Failed to create any valid image assets")
 
         # Step 3: Create variant clusters
+        # FIXME: Carefully think about How to process cluster
         if enable_clustering and self.config.clustering.enable_auto_cluster:
             # Note: Clustering requires embeddings, which we don't have yet
             # For now, create a single default cluster
@@ -561,10 +562,10 @@ class EmbeddingGenerationService:
     def _get_body_embedding_pipeline(self):
         """Lazy load body embedding pipeline (now using configurable model)."""
         if self._body_embedding_pipeline is None:
-            from ..embeddings import EmbeddingPipeline
+            from ..embeddings import BodyEmbeddingGenerator
 
             device = self._get_device()
-            self._body_embedding_pipeline = EmbeddingPipeline(
+            self._body_embedding_pipeline = BodyEmbeddingGenerator(
                 model_name=self.model_name,  # Now configurable!
                 device=device
             )
@@ -593,7 +594,7 @@ class EmbeddingGenerationService:
         generate_face_embeddings: bool = False,
         force_regenerate: bool = False,
         batch_size: int = 16,
-    ) -> tuple[list[EmbeddingSet], dict[str, Any]]:
+    ) -> tuple[list[PersonEmbedding], dict[str, Any]]:
         """
         Generate embeddings for all images in a user gallery.
 
@@ -604,7 +605,7 @@ class EmbeddingGenerationService:
             batch_size: Batch size for processing
 
         Returns:
-            Tuple of (embedding_sets, generation_info)
+            Tuple of (person_embeddings, generation_info)
 
         Raises:
             ValueError: If gallery doesn't exist
@@ -621,8 +622,9 @@ class EmbeddingGenerationService:
         """
         import time
         from ..detectors import DetectorFactory
+        from ..entities import PersonEmbedding
         from ..utils import select_device
-        from .fusion import compute_embedding_quality_score
+        from .models import ProcessingStatus
         from .utils import (
             batch_process_with_error_handling,
             handle_face_detection_failure,
@@ -678,7 +680,7 @@ class EmbeddingGenerationService:
         # Generate body embeddings
         logger.info(f"Generating body embeddings for {len(images_to_process)} images")
 
-        embedding_sets = []
+        person_embeddings = []
         errors = []
         face_embeddings_count = 0
 
@@ -742,30 +744,15 @@ class EmbeddingGenerationService:
                             source_image_id=image_asset.image_id,
                         )
 
-                        # Merge face embedding into person_embedding
+                        # Merge face embedding into person_embedding using helper method
                         if face_emb_result.face_embedding is not None:
-                            from ..entities import Modality, PersonEmbedding
-
-                            person_embedding = PersonEmbedding(
-                                # Body fields
-                                embedding_vector=person_embedding.embedding_vector,
-                                subject_confidence=person_embedding.subject_confidence,
-                                bbox=person_embedding.bbox,
-                                normalization=person_embedding.normalization,
-                                model_profile_id=person_embedding.model_profile_id,
-                                hardware=person_embedding.hardware,
-                                timestamp=person_embedding.timestamp,
-                                source_image_id=person_embedding.source_image_id,
-                                # Multi-modal fields
-                                modality=Modality.BODY_FACE,
+                            person_embedding = person_embedding.with_face_embedding(
                                 face_embedding=face_emb_result.face_embedding,
                                 face_confidence=face_emb_result.face_confidence,
                                 face_bbox=face_emb_result.face_bbox,
-                                # User gallery fields
                                 user_id=user_id,
                                 cluster_id=image_asset.cluster_id,
                                 embedding_provider=self.model_name,
-                                metadata=person_embedding.metadata,
                             )
 
                             face_embeddings_count += 1
@@ -775,6 +762,10 @@ class EmbeddingGenerationService:
                                 f"(confidence={face_emb_result.face_confidence:.3f})"
                             )
                         else:
+                            # No face detected - set user gallery fields manually
+                            person_embedding.user_id = user_id
+                            person_embedding.cluster_id = image_asset.cluster_id
+                            person_embedding.embedding_provider = self.model_name
                             logger.debug(
                                 f"No face detected for {image_asset.image_id}"
                             )
@@ -799,38 +790,26 @@ class EmbeddingGenerationService:
                         )
                         logger.debug(f"Face embedding error logged: {error_record}")
 
-                # Compute quality score
-                quality_score = compute_embedding_quality_score(
-                    embedding=person_embedding.embedding_vector,
+                # Compute quality score using PersonEmbedding method
+                quality_score = person_embedding.compute_quality_score(
                     detection_confidence=detection.confidence,
                     normalization_check=True,
                 )
 
-                # Convert PersonEmbedding to EmbeddingSet for backward compatibility
-                import uuid
-                from ..entities import person_embedding_to_legacy_embedding_set
-
-                embedding_dict = person_embedding_to_legacy_embedding_set(
-                    person_embedding,
-                    embedding_id=f"{user_id}_{uuid.uuid4().hex[:12]}",
-                    user_id=user_id,
-                )
-
-                # Override quality_score with computed value
-                embedding_dict["quality_score"] = quality_score
-                embedding_dict["image_id"] = image_asset.image_id
-                embedding_dict["cluster_id"] = image_asset.cluster_id
+                # Set quality score and ensure embedding_id is set
+                person_embedding.quality_score = quality_score
+                if not person_embedding.embedding_id:
+                    import uuid
+                    person_embedding.embedding_id = f"{user_id}_{uuid.uuid4().hex[:12]}"
 
                 # Add additional metadata
-                embedding_dict["metadata"].update({
+                person_embedding.metadata.update({
                     "detection_confidence": detection.confidence,
                     "face_confidence": person_embedding.face_confidence,
-                    "bbox": detection.bbox,
+                    "bbox": list(detection.bbox) if detection.bbox else None,
                 })
 
-                embedding_set = EmbeddingSet(**embedding_dict)
-
-                embedding_sets.append(embedding_set)
+                person_embeddings.append(person_embedding)
                 image_asset.processing_status = ProcessingStatus.COMPLETED
 
                 logger.debug(
@@ -845,15 +824,15 @@ class EmbeddingGenerationService:
                 image_asset.processing_status = ProcessingStatus.FAILED
 
         # Save embeddings
-        if len(embedding_sets) > 0:
+        if len(person_embeddings) > 0:
             # Combine with existing embeddings if not force regenerate
             if not force_regenerate:
-                all_embeddings = existing_embeddings + embedding_sets
+                all_embeddings = existing_embeddings + person_embeddings
             else:
-                all_embeddings = embedding_sets
+                all_embeddings = person_embeddings
 
             self.storage_manager.save_embeddings(user_id, all_embeddings)
-            logger.info(f"Saved {len(embedding_sets)} new embeddings for '{user_id}'")
+            logger.info(f"Saved {len(person_embeddings)} new embeddings for '{user_id}'")
 
         # Update image statuses
         self.storage_manager.save_images(user_id, images)
@@ -866,14 +845,14 @@ class EmbeddingGenerationService:
             "timestamp": datetime.now().isoformat(),
             "operation": "embedding_generation",
             "processed_images": len(images_to_process),
-            "generated_embeddings": len(embedding_sets),
+            "generated_embeddings": len(person_embeddings),
             "face_embeddings_generated": face_embeddings_count,
             "processing_time_ms": processing_time_ms,
             "force_regenerate": force_regenerate,
             "batch_size": batch_size,
             "errors_count": len(errors),
             "success_rate": (
-                len(embedding_sets) / len(images_to_process)
+                len(person_embeddings) / len(images_to_process)
                 if len(images_to_process) > 0
                 else 0.0
             ),
@@ -894,7 +873,7 @@ class EmbeddingGenerationService:
 
         # Update last embedding generation timestamp
         gallery_metadata["last_embedding_generation"] = datetime.now().isoformat()
-        gallery_metadata["total_embeddings"] = len(all_embeddings) if len(embedding_sets) > 0 else len(existing_embeddings)
+        gallery_metadata["total_embeddings"] = len(all_embeddings) if len(person_embeddings) > 0 else len(existing_embeddings)
         gallery_metadata["face_embeddings_enabled"] = generate_face_embeddings
 
         # Save updated gallery metadata
@@ -905,7 +884,7 @@ class EmbeddingGenerationService:
         generation_info = {
             "user_id": user_id,
             "processed_images": len(images_to_process),
-            "generated_embeddings": len(embedding_sets),
+            "generated_embeddings": len(person_embeddings),
             "face_embeddings_generated": face_embeddings_count,
             "processing_time_ms": processing_time_ms,
             "errors": errors if errors else None,
@@ -915,17 +894,17 @@ class EmbeddingGenerationService:
 
         logger.info(
             f"Embedding generation complete for '{user_id}': "
-            f"{len(embedding_sets)} embeddings generated in {processing_time_ms}ms"
+            f"{len(person_embeddings)} embeddings generated in {processing_time_ms}ms"
         )
 
-        return embedding_sets, generation_info
+        return person_embeddings, generation_info
 
     def regenerate_embeddings_for_images(
         self,
         user_id: str,
         image_ids: list[str],
         generate_face_embeddings: bool = False,
-    ) -> tuple[list[EmbeddingSet], dict[str, Any]]:
+    ) -> tuple[list[PersonEmbedding], dict[str, Any]]:
         """
         Regenerate embeddings for specific images.
 
@@ -935,7 +914,7 @@ class EmbeddingGenerationService:
             generate_face_embeddings: Whether to generate face embeddings
 
         Returns:
-            Tuple of (new_embedding_sets, regeneration_info)
+            Tuple of (new_person_embeddings, regeneration_info)
 
         Raises:
             ValueError: If gallery doesn't exist or images not found

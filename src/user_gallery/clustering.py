@@ -15,8 +15,9 @@ from typing import Optional
 
 import numpy as np
 
+from ..entities import PersonEmbedding
 from .config import ClusteringAlgorithm, ClusteringConfig
-from .models import EmbeddingSet, ImageAsset, VariantCluster
+from .models import ImageAsset, VariantCluster
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class VariantClusterer:
 
     def cluster_images(
         self,
-        embeddings: list[EmbeddingSet],
+        embeddings: list[PersonEmbedding],
         images: list[ImageAsset],
         user_id: str,
     ) -> list[VariantCluster]:
@@ -51,7 +52,7 @@ class VariantClusterer:
         Cluster images into appearance variants.
 
         Args:
-            embeddings: List of embedding sets for the images
+            embeddings: List of person embeddings for the images
             images: List of image assets
             user_id: User identifier for the clusters
 
@@ -70,8 +71,8 @@ class VariantClusterer:
                 f"Embeddings count ({len(embeddings)}) must match images count ({len(images)})"
             )
 
-        # Extract body embeddings for clustering
-        embedding_matrix = np.array([emb.body_embedding for emb in embeddings])
+        # Extract body embeddings for clustering (PersonEmbedding uses embedding_vector)
+        embedding_matrix = np.array([emb.embedding_vector for emb in embeddings])
 
         # Perform clustering based on configured algorithm
         if self.config.algorithm == ClusteringAlgorithm.DBSCAN:
@@ -248,7 +249,7 @@ class VariantClusterer:
         self,
         labels: np.ndarray,
         images: list[ImageAsset],
-        embeddings: list[EmbeddingSet],
+        embeddings: list[PersonEmbedding],
         user_id: str,
     ) -> list[VariantCluster]:
         """
@@ -257,13 +258,13 @@ class VariantClusterer:
         Args:
             labels: Cluster label array
             images: List of image assets
-            embeddings: List of embedding sets
+            embeddings: List of person embeddings
             user_id: User identifier
 
         Returns:
             List of VariantCluster objects
         """
-        clusters_dict: dict[int, list[tuple[ImageAsset, EmbeddingSet]]] = {}
+        clusters_dict: dict[int, list[tuple[ImageAsset, PersonEmbedding]]] = {}
 
         # Group images by cluster label
         for label, image, embedding in zip(labels, images, embeddings):
@@ -343,7 +344,7 @@ class VariantClusterer:
     def refine_clusters(
         self,
         clusters: list[VariantCluster],
-        embeddings: list[EmbeddingSet],
+        embeddings: list[PersonEmbedding],
         images: list[ImageAsset],
     ) -> list[VariantCluster]:
         """
@@ -351,7 +352,7 @@ class VariantClusterer:
 
         Args:
             clusters: Current variant clusters
-            embeddings: List of embedding sets
+            embeddings: List of person embeddings
             images: List of image assets
 
         Returns:

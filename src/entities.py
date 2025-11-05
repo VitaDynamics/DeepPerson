@@ -4,8 +4,7 @@ Data entities for DeepPerson minimal embedding library.
 Defines dataclasses for embeddings, model profiles, gallery entries, and similarity results.
 Based on data-model.md specifications.
 
-This module now supports both single-modal (body-only) and multi-modal (body+face) embeddings,
-with backward compatibility for existing code.
+This module supports both single-modal (body-only) and multi-modal (body+face) embeddings.
 """
 
 from dataclasses import dataclass, field
@@ -38,8 +37,7 @@ class PersonEmbedding:
     """
     Enhanced embedding representation for a detected person.
 
-    Supports both single-modal (body-only) and multi-modal (body+face) embeddings
-    with backward compatibility for existing code.
+    Supports both single-modal (body-only) and multi-modal (body+face) embeddings.
 
     Core Attributes (required for basic usage):
         embedding_vector: Body feature vector produced by backbone (shape: feature_dim,)
@@ -208,6 +206,123 @@ class PersonEmbedding:
             if norm > 0:
                 self.face_embedding = self.face_embedding / norm
 
+    def compute_quality_score(
+        self,
+        detection_confidence: Optional[float] = None,
+        normalization_check: bool = True,
+    ) -> float:
+        """
+        Compute quality score for this embedding.
+
+        Quality is based on:
+        - Detection confidence (uses subject_confidence if not provided)
+        - Embedding norm (should be close to 1.0 if normalized)
+        - Embedding variance (should not be too low)
+
+        Args:
+            detection_confidence: Override detection confidence (uses subject_confidence if None)
+            normalization_check: Whether to check if embedding is normalized
+
+        Returns:
+            Quality score between 0.0 and 1.0
+
+        Examples:
+            >>> emb = PersonEmbedding(...)
+            >>> quality = emb.compute_quality_score()
+            >>> print(f"Embedding quality: {quality:.3f}")
+        """
+        if self.embedding_vector is None or len(self.embedding_vector) == 0:
+            return 0.0
+
+        # Start with detection confidence
+        confidence = detection_confidence if detection_confidence is not None else self.subject_confidence
+        quality = confidence
+
+        # Check normalization
+        if normalization_check:
+            norm = np.linalg.norm(self.embedding_vector)
+            # Penalize if not normalized (should be close to 1.0)
+            norm_score = 1.0 - min(abs(norm - 1.0), 1.0)
+            quality *= norm_score
+
+        # Check variance (embeddings with very low variance are suspicious)
+        variance = np.var(self.embedding_vector)
+        if variance < 1e-6:
+            quality *= 0.5  # Penalize low variance
+
+        # Ensure quality is in valid range
+        quality = max(0.0, min(1.0, quality))
+
+        return quality
+
+    def with_face_embedding(
+        self,
+        face_embedding: np.ndarray,
+        face_confidence: float,
+        face_bbox: Optional[tuple[int, int, int, int]] = None,
+        **additional_fields
+    ) -> "PersonEmbedding":
+        """
+        Create a new PersonEmbedding with face embedding merged in.
+
+        Returns a new instance with BODY_FACE modality and face fields populated.
+        Useful for adding face embeddings to existing body-only embeddings without
+        verbose field-by-field copying.
+
+        Args:
+            face_embedding: Face embedding vector
+            face_confidence: Face detection confidence (0.0-1.0)
+            face_bbox: Optional face bounding box (x1, y1, x2, y2)
+            **additional_fields: Additional fields to override (user_id, cluster_id, etc.)
+
+        Returns:
+            New PersonEmbedding with face embedding included and modality set to BODY_FACE
+
+        Examples:
+            >>> body_emb = PersonEmbedding(...)
+            >>> # Add face embedding and user gallery fields
+            >>> multi_modal_emb = body_emb.with_face_embedding(
+            ...     face_embedding=face_vec,
+            ...     face_confidence=0.95,
+            ...     face_bbox=(120, 110, 180, 170),
+            ...     user_id="user_001",
+            ...     cluster_id="cluster_a"
+            ... )
+            >>> assert multi_modal_emb.modality == Modality.BODY_FACE
+            >>> assert multi_modal_emb.has_face_embedding
+        """
+        # Create a copy of current embedding data
+        new_data = {
+            # Core fields
+            "embedding_vector": self.embedding_vector.copy(),
+            "subject_confidence": self.subject_confidence,
+            "bbox": self.bbox,
+            "normalization": self.normalization,
+            "model_profile_id": self.model_profile_id,
+            "hardware": self.hardware,
+            "timestamp": self.timestamp,
+            "source_image_id": self.source_image_id,
+            # Multi-modal fields (update with face data)
+            "modality": Modality.BODY_FACE,
+            "face_embedding": face_embedding,
+            "face_confidence": face_confidence,
+            "face_bbox": face_bbox or self.face_bbox,
+            # User gallery fields
+            "user_id": self.user_id,
+            "embedding_id": self.embedding_id,
+            "cluster_id": self.cluster_id,
+            "quality_score": self.quality_score,
+            "embedding_provider": self.embedding_provider,
+            "embedding_version": self.embedding_version,
+            # Metadata
+            "metadata": self.metadata.copy(),
+        }
+
+        # Override with additional fields
+        new_data.update(additional_fields)
+
+        return PersonEmbedding(**new_data)
+
 
 @dataclass
 class ModelProfile:
@@ -282,109 +397,3 @@ class SimilarityResult:
     distance_metric: Literal["cosine", "euclidean", "euclidean_l2"]
     threshold: Optional[float] = None
     query_id: Optional[str] = None
-
-
-# ==================== Conversion Utilities ====================
-
-
-def person_embedding_from_legacy_embedding_set(
-    embedding_set,  # Type: EmbeddingSet from user_gallery.models
-    bbox: tuple[int, int, int, int] = (0, 0, 0, 0),
-    normalization: Literal["base", "resnet", "circle"] = "resnet",
-    model_profile_id: str = "resnet50_circle_dg",
-    hardware: Literal["cuda", "cpu"] = "cuda",
-) -> PersonEmbedding:
-    """
-    Convert a user_gallery EmbeddingSet to a unified PersonEmbedding.
-
-    This utility helps migrate from the legacy user_gallery data model to the
-    unified core PersonEmbedding model.
-
-    Args:
-        embedding_set: Legacy EmbeddingSet instance from user_gallery.models
-        bbox: Bounding box (required for PersonEmbedding, defaults to (0, 0, 0, 0))
-        normalization: Normalization method (defaults to "resnet")
-        model_profile_id: Model identifier (defaults to "resnet50_circle_dg")
-        hardware: Hardware used (defaults to "cuda")
-
-    Returns:
-        PersonEmbedding: Unified embedding with all fields mapped
-
-    Example:
-        >>> from user_gallery.models import EmbeddingSet
-        >>> legacy_emb = EmbeddingSet(...)
-        >>> unified_emb = person_embedding_from_legacy_embedding_set(legacy_emb)
-    """
-    # Determine modality
-    if embedding_set.face_embedding is not None:
-        modality = Modality.BODY_FACE
-    else:
-        modality = Modality.BODY
-
-    return PersonEmbedding(
-        # Core fields
-        embedding_vector=embedding_set.body_embedding,
-        subject_confidence=embedding_set.quality_score,  # Map quality to confidence
-        bbox=bbox,
-        normalization=normalization,
-        model_profile_id=model_profile_id,
-        hardware=hardware,
-        timestamp=embedding_set.generated_at,
-        source_image_id=embedding_set.image_id,
-        # Multi-modal fields
-        modality=modality,
-        face_embedding=embedding_set.face_embedding,
-        face_confidence=None,  # Not available in legacy model
-        face_bbox=None,  # Not available in legacy model
-        # User gallery fields
-        user_id=embedding_set.user_id,
-        embedding_id=embedding_set.embedding_id,
-        cluster_id=embedding_set.cluster_id,
-        quality_score=embedding_set.quality_score,
-        embedding_provider=embedding_set.embedding_provider,
-        embedding_version=embedding_set.embedding_version,
-        # Metadata
-        metadata=embedding_set.metadata,
-    )
-
-
-def person_embedding_to_legacy_embedding_set(
-    person_embedding: PersonEmbedding,
-    embedding_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> dict:
-    """
-    Convert a unified PersonEmbedding to legacy EmbeddingSet format (as dict).
-
-    This utility helps maintain compatibility with existing user_gallery code
-    during the migration period.
-
-    Args:
-        person_embedding: Unified PersonEmbedding instance
-        embedding_id: Override embedding_id (uses person_embedding.embedding_id if None)
-        user_id: Override user_id (uses person_embedding.user_id if None)
-
-    Returns:
-        dict: Dictionary compatible with EmbeddingSet initialization
-
-    Example:
-        >>> from user_gallery.models import EmbeddingSet
-        >>> unified_emb = PersonEmbedding(...)
-        >>> legacy_dict = person_embedding_to_legacy_embedding_set(unified_emb)
-        >>> legacy_emb = EmbeddingSet(**legacy_dict)
-    """
-    import uuid
-
-    return {
-        "embedding_id": embedding_id or person_embedding.embedding_id or str(uuid.uuid4()),
-        "user_id": user_id or person_embedding.user_id or "unknown",
-        "body_embedding": person_embedding.embedding_vector,
-        "face_embedding": person_embedding.face_embedding,
-        "embedding_provider": person_embedding.embedding_provider or person_embedding.model_profile_id,
-        "embedding_version": person_embedding.embedding_version or "1.0",
-        "quality_score": person_embedding.quality_score or person_embedding.subject_confidence,
-        "generated_at": person_embedding.timestamp or datetime.now(),
-        "image_id": person_embedding.source_image_id,
-        "cluster_id": person_embedding.cluster_id,
-        "metadata": person_embedding.metadata,
-    }

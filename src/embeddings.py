@@ -23,7 +23,7 @@ from .utils import get_device_name, normalize_embedding
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingPipeline(EmbeddingGenerator):
+class BodyEmbeddingGenerator(EmbeddingGenerator):
     """
     Pipeline for generating person embeddings from cropped person images.
 
@@ -48,7 +48,7 @@ class EmbeddingPipeline(EmbeddingGenerator):
             device: torch.device for inference
             registry: ModelRegistry instance (creates one if None)
         """
-        self.model_name = model_name
+        self._model_name = model_name
         self.device = device
 
         # Get or create registry
@@ -67,7 +67,7 @@ class EmbeddingPipeline(EmbeddingGenerator):
         self.preprocess = self._build_preprocessing()
 
         logger.info(
-            f"EmbeddingPipeline initialized: {model_name} on {device}, "
+            f"BodyEmbeddingGenerator initialized: {model_name} on {device}, "
             f"feature_dim={self.profile.feature_dim}"
         )
 
@@ -80,9 +80,14 @@ class EmbeddingPipeline(EmbeddingGenerator):
 
     @property
     def modality(self) -> str:
-        """Get the modality type (always BODY for EmbeddingPipeline)."""
+        """Get the modality type (always BODY for BodyEmbeddingGenerator)."""
         return Modality.BODY.value
-
+    
+    @property
+    def model_name(self) -> str:
+        """Get the model name."""
+        return self._model_name
+    
     # ==================== Private Methods ====================
 
     def _build_preprocessing(self) -> T.Compose:
@@ -305,9 +310,9 @@ def create_embedding_pipeline(
     model_name: str = "resnet50_circle_dg",
     device: Optional[torch.device] = None,
     prefer_cuda: bool = True
-) -> EmbeddingPipeline:
+) -> BodyEmbeddingGenerator:
     """
-    Convenience function to create an EmbeddingPipeline.
+    Convenience function to create an BodyEmbeddingGenerator.
 
     Args:
         model_name: Model identifier
@@ -315,13 +320,13 @@ def create_embedding_pipeline(
         prefer_cuda: Prefer CUDA if available
 
     Returns:
-        Initialized EmbeddingPipeline
+        Initialized BodyEmbeddingGenerator
     """
     # Auto-detect device if not provided
     if device is None:
         from .utils import select_device
         device = select_device(prefer_cuda=prefer_cuda)
 
-    pipeline = EmbeddingPipeline(model_name=model_name, device=device)
+    pipeline = BodyEmbeddingGenerator(model_name=model_name, device=device)
 
     return pipeline

@@ -51,12 +51,16 @@ DeepPerson is a person re-identification component designed for the Vbot framewo
 
 **Main API (`src/api.py`)**
 - `DeepPerson` class: Primary façade exposing all public functionality
-- Methods: `represent()`, `verify()`, `find()`, `build_gallery()`
+- Core methods: `represent()`, `verify()`
+- User Gallery methods: `create_gallery()`, `update_gallery()`, `add_images()`, `delete_gallery()`, `list_galleries()`, `represent_gallery()`, `retrieve_from_gallery()`
 
 **Processing Pipeline**
 1. **Detection** (`src/detectors.py`): YOLO-based person detection with automatic cropping
 2. **Embedding Generation** (`src/embeddings.py`): Feature extraction using deep learning models
-3. **Similarity Search** (`src/search.py`): FAISS/sklearn-based gallery search with multiple distance metrics
+3. **Similarity Search**:
+   - `src/search.py`: FAISS/sklearn-based simple similarity search
+   - `src/user_gallery/search.py`: Multi-modal (body+face) search with fusion
+   - `src/user_gallery/fusion.py`: Fusion-based retrieval service
 
 **Model Management**
 - **Registry** (`src/registry.py`): Thread-safe model profile management and caching
@@ -102,8 +106,18 @@ src/
 ├── model_manager.py    # Model download and caching
 ├── entities.py         # Data models and validation
 ├── utils.py           # Utilities (device, serialization)
-└── backbones/         # Model architectures
-    └── resnet50_circle_dg.py
+├── backbones/         # Model architectures
+│   └── resnet50_circle_dg.py
+└── user_gallery/      # User Gallery System (internal)
+    ├── api.py         # _UserGalleryAPI (internal, use DeepPerson instead)
+    ├── models.py      # Gallery data models (UserGallery, GalleryImage, etc.)
+    ├── storage.py     # Gallery storage management
+    ├── services.py    # Gallery services (registration, updates, embeddings)
+    ├── search.py      # Multi-modal search
+    ├── fusion.py      # Fusion retrieval
+    ├── clustering.py  # Appearance variant clustering
+    ├── config.py      # Gallery configuration
+    └── utils.py       # Gallery utilities
 ```
 
 ### Adding New Models
@@ -161,4 +175,9 @@ gallery_dir/
 - **Distance Metrics**: Cosine, Euclidean, Euclidean L2 supported
 
 ## Recent Changes
-- 001-user-gallery-fusion: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
+- **Gallery System Consolidation**: Unified to single User Gallery system
+  - Removed old `build_gallery()` and `find()` methods
+  - All gallery operations now through User Gallery API (multi-image, multi-modal support)
+  - `_UserGalleryAPI` made internal - all access through `DeepPerson` class
+  - Simplified defaults: `gallery_storage_path` defaults to `"galleries/"`
+  - New methods: `update_gallery()`, `add_images()`, `gallery_exists()`, `recluster_gallery()`

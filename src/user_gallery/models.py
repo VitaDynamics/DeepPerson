@@ -76,69 +76,6 @@ class ImageAsset:
 
 
 @dataclass
-class EmbeddingSet:
-    """Encapsulates body and face embedding vectors with provider metadata."""
-
-    embedding_id: str
-    user_id: str
-    body_embedding: np.ndarray
-    embedding_provider: str
-    embedding_version: str
-    quality_score: float
-    generated_at: datetime = field(default_factory=datetime.now)
-    face_embedding: Optional[np.ndarray] = None
-    image_id: Optional[str] = None
-    cluster_id: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self):
-        """Validate embedding constraints."""
-        # Validate body embedding dimensions
-        if self.body_embedding is None or len(self.body_embedding) == 0:
-            raise ValueError("Body embedding must be provided and non-empty")
-
-        # Validate embedding dimensions (typically 2048 for ResNet-50 Circle DG)
-        if len(self.body_embedding) < 512:
-            raise ValueError(f"Body embedding dimension {len(self.body_embedding)} is too small")
-
-        # Validate face embedding if present
-        if self.face_embedding is not None and len(self.face_embedding) < 128:
-            raise ValueError(f"Face embedding dimension {len(self.face_embedding)} is too small")
-
-        # Validate quality score
-        if not 0.0 <= self.quality_score <= 1.0:
-            raise ValueError("Quality score must be between 0.0 and 1.0")
-
-        # Ensure at least one embedding type is present
-        if self.body_embedding is None and self.face_embedding is None:
-            raise ValueError("At least one embedding type (body or face) must be present")
-
-    @property
-    def has_face_embedding(self) -> bool:
-        """Check if face embedding is available."""
-        return self.face_embedding is not None
-
-    @property
-    def embedding_dimension(self) -> int:
-        """Get the dimension of body embeddings."""
-        return len(self.body_embedding) if self.body_embedding is not None else 0
-
-    def normalize_body_embedding(self) -> None:
-        """Normalize body embedding to unit vector."""
-        if self.body_embedding is not None:
-            norm = np.linalg.norm(self.body_embedding)
-            if norm > 0:
-                self.body_embedding = self.body_embedding / norm
-
-    def normalize_face_embedding(self) -> None:
-        """Normalize face embedding to unit vector."""
-        if self.face_embedding is not None:
-            norm = np.linalg.norm(self.face_embedding)
-            if norm > 0:
-                self.face_embedding = self.face_embedding / norm
-
-
-@dataclass
 class VariantCluster:
     """Captures a specific appearance cluster for a user (e.g., outfit, time period)."""
 
@@ -234,7 +171,8 @@ class RetrievalProbe:
 
     probe_id: str
     probe_image_path: str
-    probe_modality: Modality = Modality.AUTO_DETECT
+    # FIXME: Here we should support AUTO DETECT Modality Or Support Both.
+    probe_modality: Modality = Modality.BODY
     generated_embeddings: Dict[str, np.ndarray] = field(default_factory=dict)
     fusion_weights: Dict[str, float] = field(default_factory=dict)
     retrieval_config: Dict[str, Any] = field(default_factory=dict)
@@ -333,5 +271,4 @@ class RetrievalResult:
 # Type aliases for convenience
 UserGalleryDict = Dict[str, Any]
 ImageAssetDict = Dict[str, Any]
-EmbeddingSetDict = Dict[str, Any]
 RetrievalResultDict = Dict[str, Any]

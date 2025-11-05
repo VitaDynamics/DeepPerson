@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 import torch
 
 from .detectors import DetectorFactory, PersonDetector
-from .embeddings import EmbeddingPipeline
+from .embeddings import BodyEmbeddingGenerator
 from .entities import PersonEmbedding
 from .registry import get_registry
 from .search import compute_distance
@@ -81,7 +81,7 @@ class DeepPerson:
         )
 
         # Initialize embedding pipeline
-        self.embedding_pipeline = EmbeddingPipeline(
+        self.embedding_pipeline = BodyEmbeddingGenerator(
             model_name=model_name, device=self.device
         )
 
@@ -206,7 +206,7 @@ class DeepPerson:
             storage_path: Path to gallery storage directory
 
         Returns:
-            Cached or newly created UserGalleryAPI
+            Cached or newly created _UserGalleryAPI (internal)
 
         Examples:
             >>> dp = DeepPerson()
@@ -214,12 +214,12 @@ class DeepPerson:
             >>> api2 = dp._get_gallery_api("galleries/")
             >>> assert api1 is api2  # Same instance returned
         """
-        from .user_gallery.api import UserGalleryAPI
+        from .user_gallery.api import _UserGalleryAPI
 
         storage_path_str = str(Path(storage_path))
 
         if storage_path_str not in self._gallery_api_cache:
-            self._gallery_api_cache[storage_path_str] = UserGalleryAPI(
+            self._gallery_api_cache[storage_path_str] = _UserGalleryAPI(
                 storage_path=storage_path_str
             )
             logger.debug(f"Created and cached gallery API: {storage_path_str}")
@@ -688,279 +688,6 @@ class DeepPerson:
 
         return response
 
-    def find(
-        self,
-        img_path: Union[str, Path],
-        gallery_path: Union[str, Path],
-        top_k: int = 5,
-        model_name: Optional[str] = None,
-        detector_backend: Optional[str] = None,
-        distance_metric: Literal["cosine", "euclidean", "euclidean_l2"] = "cosine",
-        threshold: Optional[float] = None,
-        gallery_name: str = "gallery",
-    ) -> Dict[str, Any]:
-        """
-        Find the best matches for a person in a gallery database.
-
-        Args:
-            img_path: Path to query image containing person to search for
-            gallery_path: Path to gallery database directory
-            top_k: Number of top matches to return
-            model_name: Override model name (uses instance default if None)
-            detector_backend: Override detector backend (uses instance default if None)
-            distance_metric: Distance metric ('cosine', 'euclidean', 'euclidean_l2')
-            threshold: Distance threshold for filtering matches (None for no filtering)
-            gallery_name: Name of gallery within gallery_path directory
-
-        Returns:
-            Dictionary containing:
-                - query: Information about query image and embedding
-                - matches: List of top-k matches with subject IDs, distances, and metadata
-                - gallery_info: Gallery metadata (total entries, metric used, etc.)
-                - warnings: List of warnings if any
-
-        Raises:
-            FileNotFoundError: If gallery not found
-            ValueError: If no person detected in query image
-
-        Examples:
-            >>> # Find person in gallery
-            >>> result = dp.find("query.jpg", "./galleries/mydb", top_k=10)
-            >>> for match in result["matches"]:
-            ...     print(f"{match['subject_id']}: distance={match['distance']:.4f}")
-            >>>
-            >>> # With threshold filtering
-            >>> result = dp.find("query.jpg", "./galleries/mydb", threshold=0.30)
-        """
-        logger.info(f"Searching for person in gallery: {gallery_path}/{gallery_name}")
-
-        # Load gallery
-        from .utils import load_gallery_index
-
-        try:
-            searcher = load_gallery_index(
-                gallery_dir=Path(gallery_path),
-                gallery_name=gallery_name,
-                backend="auto",
-                device=str(self.device),
-            )
-        except FileNotFoundError as e:
-            raise FileNotFoundError(f"Gallery not found: {e}")
-
-        # Generate embedding for query image
-        result = self.represent(
-            img_path=img_path,
-            detector_backend=detector_backend,
-            normalization="resnet",
-            confidence_threshold=0.5,
-        )
-
-        # Check if person was detected
-        if len(result["subjects"]) == 0:
-            raise ValueError(
-                f"No person detected in query image: {Path(img_path).name}"
-            )
-
-        warnings_list = []
-        if len(result["subjects"]) > 1:
-            warning = f"Multiple persons detected in query image ({len(result['subjects'])}), using first detection"
-            logger.warning(warning)
-            warnings_list.append(warning)
-
-        # Get query embedding
-        query_embedding = result["subjects"][0]["embedding"]
-        query_metadata = result["subjects"][0]["metadata"]
-
-        # Search gallery
-        search_results = searcher.search(
-            query_embedding=query_embedding, k=top_k, threshold=threshold
-        )
-
-        # Package results
-        matches = []
-        for match in search_results:
-            matches.append(
-                {
-                    "subject_id": match["subject_id"],
-                    "distance": match["distance"],
-                    "metadata": match.get("metadata", {}),
-                }
-            )
-
-        # Build response
-        response = {
-            "query": {
-                "image_path": str(img_path),
-                "bbox": query_metadata["bbox"],
-                "confidence": query_metadata["confidence"],
-            },
-            "matches": matches,
-            "gallery_info": {
-                "path": str(gallery_path),
-                "name": gallery_name,
-                "total_entries": len(searcher.subject_ids),
-                "metric": searcher.metric,
-                "backend": searcher.__class__.__name__,
-            },
-            "model_info": {
-                "name": model_name or self.model_name,
-                "device": str(self.device),
-                "distance_metric": distance_metric,
-            },
-        }
-
-        if warnings_list:
-            response["warnings"] = warnings_list
-
-        logger.info(
-            f"Search completed: {len(matches)} matches found (k={top_k}, threshold={threshold})"
-        )
-
-        return response
-
-    def build_gallery(
-        self,
-        img_paths: List[Union[str, Path]],
-        subject_ids: List[str],
-        gallery_path: Union[str, Path],
-        model_name: Optional[str] = None,
-        detector_backend: Optional[str] = None,
-        batch_size: int = 16,
-        normalization: Literal["base", "resnet", "circle"] = "resnet",
-        gallery_name: str = "gallery",
-        distance_metric: Literal["cosine", "euclidean", "euclidean_l2"] = "cosine",
-        backend: str = "auto",
-    ) -> Dict[str, Any]:
-        """
-        Build a searchable gallery database from images.
-
-        Generates embeddings for all images and creates a searchable FAISS or sklearn index.
-
-        Args:
-            img_paths: List of image file paths (one per subject)
-            subject_ids: List of subject IDs corresponding to images (must match length of img_paths)
-            gallery_path: Path where gallery database will be saved
-            model_name: Override model name (uses instance default if None)
-            detector_backend: Override detector backend (uses instance default if None)
-            batch_size: Batch size for embedding generation
-            normalization: Normalization method ('base', 'resnet', 'circle')
-            gallery_name: Name for the gallery (default: "gallery")
-            distance_metric: Distance metric for similarity search ('cosine', 'euclidean', 'euclidean_l2')
-            backend: Search backend ('auto', 'faiss', 'sklearn')
-
-        Returns:
-            Dictionary containing:
-                - gallery_info: Gallery metadata (path, name, total entries, metric, backend)
-                - processed: Number of images successfully processed
-                - failed: Number of images that failed processing
-                - warnings: List of warnings
-                - model_info: Model and hardware information
-
-        Raises:
-            ValueError: If img_paths and subject_ids lengths don't match
-            FileNotFoundError: If image files not found
-
-        Examples:
-            >>> # Build gallery from images
-            >>> images = ["person1.jpg", "person2.jpg", "person3.jpg"]
-            >>> ids = ["person_001", "person_002", "person_003"]
-            >>> result = dp.build_gallery(images, ids, "./galleries/mydb")
-            >>> print(f"Gallery created with {result['processed']} entries")
-            >>>
-            >>> # Build with custom settings
-            >>> result = dp.build_gallery(
-            ...     images, ids, "./galleries/custom",
-            ...     distance_metric="euclidean",
-            ...     backend="faiss"
-            ... )
-        """
-        logger.info(
-            f"Building gallery: {gallery_path}/{gallery_name} with {len(img_paths)} images"
-        )
-
-        # Validate inputs
-        if len(img_paths) != len(subject_ids):
-            raise ValueError(
-                f"Length mismatch: img_paths ({len(img_paths)}) != subject_ids ({len(subject_ids)})"
-            )
-
-        # Process all images to generate embeddings
-        result = self.represent(
-            img_path=img_paths,
-            detector_backend=detector_backend,
-            normalization=normalization,
-            batch_size=batch_size,
-            confidence_threshold=0.5,
-        )
-
-        # Track processing results
-        processed_count = 0
-        failed_count = 0
-        warnings_list = result.get("warnings", []) or []
-
-        # Create searcher instance
-        from .search import SearcherFactory
-
-        feature_dim = result["model_info"]["feature_dim"]
-        searcher = SearcherFactory.create_searcher(
-            backend=backend,
-            dimension=feature_dim,
-            metric=distance_metric,
-            device=str(self.device),
-        )
-
-        # Add embeddings to searcher
-        if len(result["subjects"]) > 0:
-            # Match embeddings to subject IDs
-            # If multiple detections per image, take first detection
-            for i, subject_id in enumerate(subject_ids):
-                if i < len(result["subjects"]):
-                    embedding = result["subjects"][i]["embedding"]
-                    metadata = result["subjects"][i]["metadata"]
-
-                    searcher.add_embedding(
-                        embedding=embedding, subject_id=subject_id, metadata=metadata
-                    )
-                    processed_count += 1
-                else:
-                    failed_count += 1
-                    warning = f"No embedding generated for subject: {subject_id}"
-                    logger.warning(warning)
-                    warnings_list.append(warning)
-
-        # Save gallery
-        from .utils import save_gallery_index
-
-        gallery_dir = save_gallery_index(
-            searcher=searcher,
-            gallery_dir=Path(gallery_path),
-            gallery_name=gallery_name,
-            model_profile_id=model_name or self.model_name,
-        )
-
-        # Build response
-        response = {
-            "gallery_info": {
-                "path": str(gallery_dir),
-                "name": gallery_name,
-                "total_entries": len(searcher.subject_ids),
-                "metric": distance_metric,
-                "backend": searcher.__class__.__name__,
-            },
-            "processed": processed_count,
-            "failed": failed_count,
-            "model_info": result["model_info"],
-        }
-
-        if warnings_list:
-            response["warnings"] = warnings_list
-
-        logger.info(
-            f"Gallery built successfully: {processed_count} processed, "
-            f"{failed_count} failed, saved to {gallery_dir}"
-        )
-
-        return response
 
     # ==================== User Gallery Methods ====================
 
@@ -972,7 +699,7 @@ class DeepPerson:
         metadata: Optional[dict[str, Any]] = None,
         modality_hints: Optional[dict[str, str]] = None,
         enable_clustering: bool = True,
-        gallery_storage_path: Optional[Union[str, Path]] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
     ) -> dict[str, Any]:
         """
         Create a new user gallery with multiple images.
@@ -1015,8 +742,7 @@ class DeepPerson:
             >>> print(f"Created gallery with {result['total_images']} images")
         """
         # Get cached gallery API (Phase 6: Optimization)
-        storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = self._get_gallery_api(storage_path)
+        gallery_api = self._get_gallery_api(gallery_storage_path)
 
         # Create gallery
         result = gallery_api.create_gallery(
@@ -1034,7 +760,7 @@ class DeepPerson:
     def get_gallery(
         self,
         user_id: str,
-        gallery_storage_path: Optional[Union[str, Path]] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
     ) -> dict[str, Any]:
         """
         Get information about a user gallery.
@@ -1055,15 +781,14 @@ class DeepPerson:
             >>> print(f"Gallery has {gallery_info['total_images']} images")
         """
         # Get cached gallery API (Phase 6: Optimization)
-        storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = self._get_gallery_api(storage_path)
+        gallery_api = self._get_gallery_api(gallery_storage_path)
 
         return gallery_api.get_gallery(user_id)
 
     def list_galleries(
         self,
         status_filter: Optional[str] = None,
-        gallery_storage_path: Optional[Union[str, Path]] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
     ) -> list[dict[str, Any]]:
         """
         List all user galleries.
@@ -1081,8 +806,7 @@ class DeepPerson:
             >>> print(f"Found {len(galleries)} active galleries")
         """
         # Get cached gallery API (Phase 6: Optimization)
-        storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = self._get_gallery_api(storage_path)
+        gallery_api = self._get_gallery_api(gallery_storage_path)
 
         return gallery_api.list_galleries(status_filter=status_filter)
 
@@ -1090,7 +814,7 @@ class DeepPerson:
         self,
         user_id: str,
         permanent: bool = False,
-        gallery_storage_path: Optional[Union[str, Path]] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
     ) -> dict[str, Any]:
         """
         Delete a user gallery.
@@ -1109,10 +833,140 @@ class DeepPerson:
             >>> print(f"Gallery deleted: {result['success']}")
         """
         # Get cached gallery API (Phase 6: Optimization)
-        storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        gallery_api = self._get_gallery_api(storage_path)
+        gallery_api = self._get_gallery_api(gallery_storage_path)
 
         return gallery_api.delete_gallery(user_id, permanent=permanent)
+
+    def update_gallery(
+        self,
+        user_id: str,
+        name: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+        status: Optional[str] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
+    ) -> dict[str, Any]:
+        """
+        Update gallery metadata and status.
+
+        Args:
+            user_id: User identifier
+            name: Optional new display name
+            metadata: Optional metadata to merge with existing
+            status: Optional new status ("ACTIVE", "INACTIVE", "PENDING_VERIFICATION")
+            gallery_storage_path: Optional custom storage path
+
+        Returns:
+            Updated gallery information
+
+        Raises:
+            ValueError: If gallery doesn't exist or invalid status
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> result = dp.update_gallery(
+            ...     user_id="user_001",
+            ...     name="John Smith",
+            ...     status="ACTIVE"
+            ... )
+        """
+        gallery_api = self._get_gallery_api(gallery_storage_path)
+        return gallery_api.update_gallery(
+            user_id=user_id, name=name, metadata=metadata, status=status
+        )
+
+    def add_images(
+        self,
+        user_id: str,
+        image_paths: list[Union[str, Path]],
+        modality_hints: Optional[dict[str, str]] = None,
+        recluster: bool = False,
+        gallery_storage_path: Union[str, Path] = "galleries/",
+    ) -> dict[str, Any]:
+        """
+        Add new images to an existing gallery.
+
+        Args:
+            user_id: User identifier
+            image_paths: List of new image paths
+            modality_hints: Optional modality hints for new images
+            recluster: Whether to recluster after adding images
+            gallery_storage_path: Optional custom storage path
+
+        Returns:
+            Dictionary with update information
+
+        Raises:
+            ValueError: If gallery doesn't exist or validation fails
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> result = dp.add_images(
+            ...     user_id="user_001",
+            ...     image_paths=["new_body.jpg", "new_face.jpg"],
+            ...     modality_hints={"new_body.jpg": "BODY", "new_face.jpg": "FACE"}
+            ... )
+            >>> print(f"Added {result['images_added']} images")
+        """
+        gallery_api = self._get_gallery_api(gallery_storage_path)
+        return gallery_api.add_images(
+            user_id=user_id,
+            image_paths=image_paths,
+            modality_hints=modality_hints,
+            recluster=recluster,
+        )
+
+    def gallery_exists(
+        self,
+        user_id: str,
+        gallery_storage_path: Union[str, Path] = "galleries/",
+    ) -> bool:
+        """
+        Check if a gallery exists for the given user.
+
+        Args:
+            user_id: User identifier
+            gallery_storage_path: Optional custom storage path
+
+        Returns:
+            True if gallery exists, False otherwise
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> if dp.gallery_exists("user_001"):
+            ...     print("Gallery exists")
+        """
+        gallery_api = self._get_gallery_api(gallery_storage_path)
+        return gallery_api.gallery_exists(user_id)
+
+    def recluster_gallery(
+        self,
+        user_id: str,
+        algorithm: Optional[str] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
+    ) -> dict[str, Any]:
+        """
+        Recluster an existing gallery.
+
+        Requires embeddings to be generated first.
+
+        Args:
+            user_id: User identifier
+            algorithm: Optional clustering algorithm override
+            gallery_storage_path: Optional custom storage path
+
+        Returns:
+            Dictionary with clustering information
+
+        Raises:
+            ValueError: If gallery doesn't exist or no embeddings found
+
+        Examples:
+            >>> dp = DeepPerson()
+            >>> result = dp.recluster_gallery("user_001", algorithm="DBSCAN")
+            >>> print(f"Created {result['clusters_created']} clusters")
+        """
+        gallery_api = self._get_gallery_api(gallery_storage_path)
+        return gallery_api.recluster_gallery(user_id=user_id, algorithm=algorithm)
 
     def represent_gallery(
         self,
@@ -1120,7 +974,7 @@ class DeepPerson:
         generate_face_embeddings: bool = False,
         force_regenerate: bool = False,
         batch_size: int = 16,
-        gallery_storage_path: Optional[Union[str, Path]] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
     ) -> dict[str, Any]:
         """
         Generate embeddings for all images in a user gallery.
@@ -1170,18 +1024,13 @@ class DeepPerson:
             ...     force_regenerate=True
             ... )
         """
-        from .user_gallery.api import UserGalleryAPI
-        from .user_gallery.services import EmbeddingGenerationService
-        from .user_gallery.storage import GalleryStorageManager
-
         logger.info(
             f"Generating embeddings for gallery '{user_id}' "
             f"(face_embeddings={generate_face_embeddings}, force={force_regenerate})"
         )
 
         # Get cached components (Phase 6: Optimization)
-        storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        embedding_service = self._get_embedding_service(storage_path)
+        embedding_service = self._get_embedding_service(gallery_storage_path)
 
         # Generate embeddings
         embeddings, generation_info = embedding_service.generate_embeddings_for_gallery(
@@ -1221,7 +1070,7 @@ class DeepPerson:
     def get_gallery_embedding_stats(
         self,
         user_id: str,
-        gallery_storage_path: Optional[Union[str, Path]] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
     ) -> dict[str, Any]:
         """
         Get embedding statistics for a user gallery.
@@ -1250,8 +1099,7 @@ class DeepPerson:
             >>> print(f"Average quality: {stats['average_quality_score']:.3f}")
         """
         # Get cached embedding service (Phase 6: Optimization)
-        storage_path = gallery_storage_path if gallery_storage_path else "galleries/"
-        embedding_service = self._get_embedding_service(storage_path)
+        embedding_service = self._get_embedding_service(gallery_storage_path)
 
         return embedding_service.get_embedding_statistics(user_id)
 
@@ -1264,7 +1112,7 @@ class DeepPerson:
         generate_face_embeddings: bool = True,
         fusion_weights: Optional[dict[str, float]] = None,
         include_evidence: bool = True,
-        gallery_storage_path: Optional[Union[str, Path]] = None,
+        gallery_storage_path: Union[str, Path] = "galleries/",
     ) -> dict[str, Any]:
         """
         Retrieve users from a user gallery using fusion-based similarity search.
@@ -1328,8 +1176,7 @@ class DeepPerson:
         )
 
         # Initialize storage path
-        storage_path = Path(gallery_storage_path if gallery_storage_path else "galleries/")
-        gallery_dir = storage_path / gallery_name
+        gallery_dir = Path(gallery_storage_path) / gallery_name
 
         # Check if gallery exists
         if not gallery_dir.exists():

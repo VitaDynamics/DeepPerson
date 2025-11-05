@@ -19,9 +19,12 @@ from .storage import GalleryStorageManager
 logger = logging.getLogger(__name__)
 
 
-class UserGalleryAPI:
+class _UserGalleryAPI:
     """
-    Main API facade for user gallery operations.
+    Internal API facade for user gallery operations.
+
+    This class is internal to DeepPerson and should not be used directly.
+    Use DeepPerson's gallery methods instead.
 
     Provides high-level methods for:
     - Creating user galleries

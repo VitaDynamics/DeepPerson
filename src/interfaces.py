@@ -23,7 +23,7 @@ class EmbeddingGenerator(ABC):
     whether they generate body embeddings, face embeddings, or multi-modal embeddings.
 
     Implementations:
-        - EmbeddingPipeline: Body embeddings using ReID models
+        - BodyEmbeddingGenerator: Body embeddings using ReID models
         - FaceEmbeddingGenerator: Face embeddings using face recognition models
         - MultiModalEmbeddingGenerator: Combined body+face embeddings
     """

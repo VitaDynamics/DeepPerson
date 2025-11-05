@@ -21,7 +21,7 @@ parent_dir = str(Path(__file__).parent.parent)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-from search import FAISS_AVAILABLE, FAISSSearcher  # noqa: E402
+from search import SearcherFactory  # noqa: E402
 
 from .config import FusionConfig, SearchConfig  # noqa: E402
 from .models import ConfidenceLevel, RetrievalProbe, RetrievalResult  # noqa: E402
@@ -45,6 +45,7 @@ class MultiModalSearcher:
         device: str = "cpu",
         search_config: SearchConfig | None = None,
         fusion_config: FusionConfig | None = None,
+        backend: str = "auto",
     ):
         """
         Initialize multi-modal searcher with separate indexes.
@@ -56,34 +57,31 @@ class MultiModalSearcher:
             device: Device to run on ('cpu' or 'cuda')
             search_config: Optional search configuration
             fusion_config: Optional fusion configuration
+            backend: Search backend ("auto", "faiss", "sklearn")
 
         Raises:
-            ImportError: If FAISS is not available
+            ImportError: If no search backend is available
         """
-        if not FAISS_AVAILABLE:
-            raise ImportError(
-                "FAISS is not available. Install with: pip install faiss-cpu or faiss-gpu"
-            )
-
         self.body_dimension = body_dimension
         self.face_dimension = face_dimension
         self.metric = metric
         self.device = device
+        self.backend = backend
         self._lock = threading.RLock()
 
         # Configuration
         self.search_config = search_config if search_config else SearchConfig()
         self.fusion_config = fusion_config if fusion_config else FusionConfig()
 
-        # Create separate FAISS indexes
-        self.body_index = FAISSSearcher(
-            dimension=body_dimension, metric=metric, device=device
+        # Create separate search indexes using SearcherFactory
+        self.body_index = SearcherFactory.create_searcher(
+            backend=backend, dimension=body_dimension, metric=metric, device=device
         )
 
         self.face_index = None
         if face_dimension is not None:
-            self.face_index = FAISSSearcher(
-                dimension=face_dimension, metric=metric, device=device
+            self.face_index = SearcherFactory.create_searcher(
+                backend=backend, dimension=face_dimension, metric=metric, device=device
             )
 
         # User-level metadata mapping
@@ -91,7 +89,7 @@ class MultiModalSearcher:
 
         logger.info(
             f"Initialized MultiModalSearcher: body_dim={body_dimension}, "
-            f"face_dim={face_dimension}, metric={metric}, device={device}"
+            f"face_dim={face_dimension}, metric={metric}, device={device}, backend={backend}"
         )
 
     def add_user_gallery(
@@ -126,14 +124,23 @@ class MultiModalSearcher:
                     f"got {body_embeddings.shape[1]}"
                 )
 
-            # Add body embeddings to body index
+            # Add body embeddings to body index using batch operation if available
             n_body_images = body_embeddings.shape[0]
-            for i, body_emb in enumerate(body_embeddings):
-                self.body_index.add_embedding(
-                    body_emb,
-                    subject_id=user_id,
-                    metadata={"modality": "body", "embedding_index": i},
-                )
+            body_subject_ids = [user_id] * n_body_images
+            body_metadata = [
+                {"modality": "body", "embedding_index": i} for i in range(n_body_images)
+            ]
+            
+            # Use add_batch if available (FAISS), otherwise fall back to individual adds (sklearn)
+            if hasattr(self.body_index, 'add_batch'):
+                self.body_index.add_batch(body_embeddings, body_subject_ids, body_metadata)
+            else:
+                for i, body_emb in enumerate(body_embeddings):
+                    self.body_index.add_embedding(
+                        body_emb,
+                        subject_id=user_id,
+                        metadata=body_metadata[i],
+                    )
 
             # Add face embeddings if provided
             if face_embeddings is not None and self.face_index is not None:
@@ -146,12 +153,22 @@ class MultiModalSearcher:
                         f"got {face_embeddings.shape[1]}"
                     )
 
-                for i, face_emb in enumerate(face_embeddings):
-                    self.face_index.add_embedding(
-                        face_emb,
-                        subject_id=user_id,
-                        metadata={"modality": "face", "embedding_index": i},
-                    )
+                n_face_images = face_embeddings.shape[0]
+                face_subject_ids = [user_id] * n_face_images
+                face_metadata = [
+                    {"modality": "face", "embedding_index": i} for i in range(n_face_images)
+                ]
+                
+                # Use add_batch if available (FAISS), otherwise fall back to individual adds (sklearn)
+                if hasattr(self.face_index, 'add_batch'):
+                    self.face_index.add_batch(face_embeddings, face_subject_ids, face_metadata)
+                else:
+                    for i, face_emb in enumerate(face_embeddings):
+                        self.face_index.add_embedding(
+                            face_emb,
+                            subject_id=user_id,
+                            metadata=face_metadata[i],
+                        )
 
             # Store user metadata
             self.user_metadata[user_id] = metadata or {}
@@ -255,6 +272,27 @@ class MultiModalSearcher:
             )
             return results
 
+    def _distance_to_similarity(self, distance: float) -> float:
+        """
+        Convert distance to similarity score based on the current metric.
+        
+        Args:
+            distance: Distance value from search
+            
+        Returns:
+            Similarity score in range [0, 1] where higher is better
+        """
+        if self.metric == "cosine":
+            # For cosine distance: similarity = 1 - distance
+            return max(0.0, 1.0 - distance)
+        elif self.metric in ["euclidean", "euclidean_l2"]:
+            # For euclidean distances, use a simple inverse relationship
+            # This is a simplified conversion - could be made more sophisticated
+            return max(0.0, 1.0 / (1.0 + distance))
+        else:
+            # Fallback: assume lower distance is better
+            return max(0.0, 1.0 - distance)
+
     def _compute_fusion_scores(
         self,
         body_results: list[dict[str, Any]],
@@ -277,8 +315,8 @@ class MultiModalSearcher:
         # Process body results
         for result in body_results:
             user_id = result["subject_id"]
-            # Convert distance to similarity score (assuming cosine distance)
-            body_similarity = 1.0 - result["distance"]
+            # Convert distance to similarity score based on metric
+            body_similarity = self._distance_to_similarity(result["distance"])
 
             if user_id not in user_scores:
                 user_scores[user_id] = {
@@ -295,7 +333,8 @@ class MultiModalSearcher:
         # Process face results
         for result in face_results:
             user_id = result["subject_id"]
-            face_similarity = 1.0 - result["distance"]
+            # Convert distance to similarity score based on metric
+            face_similarity = self._distance_to_similarity(result["distance"])
 
             if user_id not in user_scores:
                 user_scores[user_id] = {
@@ -407,6 +446,7 @@ class MultiModalSearcher:
                 "face_dimension": self.face_dimension,
                 "metric": self.metric,
                 "device": self.device,
+                "backend": self.backend,
                 "has_face_index": self.face_index is not None,
                 "total_users": len(self.user_metadata),
             }
@@ -570,6 +610,7 @@ class MultiModalIndexManager:
         face_dimension: int | None = 512,
         metric: str = "cosine",
         device: str = "cpu",
+        backend: str = "auto",
     ) -> MultiModalSearcher:
         """
         Create a new gallery index.
@@ -580,6 +621,7 @@ class MultiModalIndexManager:
             face_dimension: Face embedding dimension
             metric: Distance metric
             device: Compute device
+            backend: Search backend ("auto", "faiss", "sklearn")
 
         Returns:
             MultiModalSearcher instance
@@ -596,10 +638,11 @@ class MultiModalIndexManager:
                 face_dimension=face_dimension,
                 metric=metric,
                 device=device,
+                backend=backend,
             )
 
             self._galleries[gallery_name] = searcher
-            logger.info(f"Created new gallery '{gallery_name}'")
+            logger.info(f"Created new gallery '{gallery_name}' with backend '{backend}'")
             return searcher
 
     def load_gallery(self, gallery_name: str) -> MultiModalSearcher:
@@ -632,6 +675,7 @@ class MultiModalIndexManager:
                 face_dimension=config.get("face_dimension"),
                 metric=config["metric"],
                 device=config["device"],
+                backend=config.get("backend", "auto"),
             )
 
             # Load data

@@ -17,8 +17,8 @@ from typing import Any
 
 import numpy as np
 
+from ..entities import PersonEmbedding, Modality as CoreModality
 from .models import (
-    EmbeddingSet,
     GalleryStatus,
     ImageAsset,
     Modality,
@@ -39,11 +39,10 @@ def serialize_user_gallery(
     """
     Serialize UserGallery to disk with all associated data.
 
-    Creates a directory structure:
-    {output_dir}/{user_id}/
-        ├── gallery_metadata.json      # Gallery metadata and structure
-        ├── variant_clusters.json      # Cluster definitions
-        └── embeddings/                # Embedding data (if any)
+    Writes gallery metadata files to the provided directory:
+        {output_dir}/
+            ├── gallery_metadata.json      # Gallery metadata and structure
+            └── variant_clusters.json      # Cluster definitions
 
     Args:
         gallery: UserGallery instance to serialize
@@ -58,8 +57,7 @@ def serialize_user_gallery(
         OSError: If directory creation or file writing fails
     """
     output_dir = Path(output_dir)
-    gallery_dir = output_dir / gallery.user_id
-    gallery_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Serialize gallery metadata
     metadata = {
@@ -73,7 +71,7 @@ def serialize_user_gallery(
         "total_images": gallery.total_images,
     }
 
-    metadata_path = gallery_dir / "gallery_metadata.json"
+    metadata_path = output_dir / "gallery_metadata.json"
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2, default=str)
     logger.debug(f"Saved gallery metadata to {metadata_path}")
@@ -94,13 +92,13 @@ def serialize_user_gallery(
             }
             clusters_data.append(cluster_dict)
 
-        clusters_path = gallery_dir / "variant_clusters.json"
+        clusters_path = output_dir / "variant_clusters.json"
         with open(clusters_path, "w") as f:
             json.dump(clusters_data, f, indent=2, default=str)
         logger.debug(f"Saved {len(clusters_data)} variant clusters to {clusters_path}")
 
-    logger.info(f"Serialized user gallery '{gallery.user_id}' to {gallery_dir}")
-    return gallery_dir
+    logger.info(f"Serialized user gallery '{gallery.user_id}' to {output_dir}")
+    return output_dir
 
 
 def deserialize_user_gallery(gallery_dir: Path) -> UserGallery:
@@ -245,18 +243,18 @@ def deserialize_image_assets(input_file: Path) -> list[ImageAsset]:
     return images
 
 
-def serialize_embedding_sets(
-    embeddings: list[EmbeddingSet], output_dir: Path, save_format: str = "npz"
+def serialize_person_embeddings(
+    embeddings: list[PersonEmbedding], output_dir: Path, save_format: str = "npz"
 ) -> Path:
     """
-    Serialize list of EmbeddingSet objects with multi-modal embeddings.
+    Serialize list of PersonEmbedding objects with multi-modal embeddings.
 
     Creates:
         - embeddings.npz: Compressed numpy arrays for body/face embeddings
-        - embeddings_metadata.json: Metadata for each embedding set
+        - embeddings_metadata.json: Metadata for each person embedding
 
     Args:
-        embeddings: List of EmbeddingSet instances
+        embeddings: List of PersonEmbedding instances
         output_dir: Directory to save embeddings
         save_format: Format for numpy arrays ('npz' or 'pkl')
 
@@ -282,24 +280,33 @@ def serialize_embedding_sets(
     metadata_list = []
 
     for emb in embeddings:
-        body_embeddings.append(emb.body_embedding)
+        # PersonEmbedding uses embedding_vector for body embedding
+        body_embeddings.append(emb.embedding_vector)
         face_embeddings.append(
             emb.face_embedding
             if emb.face_embedding is not None
-            else np.zeros_like(emb.body_embedding)
+            else np.zeros_like(emb.embedding_vector)
         )
-        embedding_ids.append(emb.embedding_id)
+        embedding_ids.append(emb.embedding_id or emb.source_image_id or "")
 
         meta_dict = {
             "embedding_id": emb.embedding_id,
             "user_id": emb.user_id,
-            "image_id": emb.image_id,
+            "source_image_id": emb.source_image_id,  # Maps to image_id
             "cluster_id": emb.cluster_id,
-            "embedding_provider": emb.embedding_provider,
-            "embedding_version": emb.embedding_version,
-            "quality_score": emb.quality_score,
-            "generated_at": emb.generated_at.isoformat(),
+            "embedding_provider": emb.embedding_provider or emb.model_profile_id,
+            "embedding_version": emb.embedding_version or "1.0",
+            "quality_score": emb.quality_score or emb.subject_confidence,
+            "timestamp": emb.timestamp.isoformat() if emb.timestamp else datetime.now().isoformat(),
             "has_face_embedding": emb.has_face_embedding,
+            "face_confidence": emb.face_confidence,
+            "subject_confidence": emb.subject_confidence,
+            "bbox": list(emb.bbox) if emb.bbox else None,
+            "face_bbox": list(emb.face_bbox) if emb.face_bbox else None,
+            "modality": emb.modality.value,
+            "normalization": emb.normalization,
+            "model_profile_id": emb.model_profile_id,
+            "hardware": emb.hardware,
             "metadata": emb.metadata,
         }
         metadata_list.append(meta_dict)
@@ -337,22 +344,22 @@ def serialize_embedding_sets(
             default=str,
         )
 
-    logger.info(f"Serialized {len(embeddings)} embedding sets to {output_dir}")
+    logger.info(f"Serialized {len(embeddings)} person embeddings to {output_dir}")
     return output_dir
 
 
-def deserialize_embedding_sets(
+def deserialize_person_embeddings(
     input_dir: Path, load_format: str = "npz"
-) -> list[EmbeddingSet]:
+) -> list[PersonEmbedding]:
     """
-    Deserialize list of EmbeddingSet objects from saved files.
+    Deserialize list of PersonEmbedding objects from saved files.
 
     Args:
         input_dir: Directory containing saved embeddings
         load_format: Format to load from ('npz' or 'pkl')
 
     Returns:
-        List of reconstructed EmbeddingSet instances
+        List of reconstructed PersonEmbedding instances
 
     Raises:
         FileNotFoundError: If required files are missing
@@ -391,29 +398,60 @@ def deserialize_embedding_sets(
     else:
         raise ValueError(f"Invalid load format: {load_format}")
 
-    # Reconstruct EmbeddingSet objects
+    # Reconstruct PersonEmbedding objects
     embeddings = []
     for i, meta in enumerate(metadata_list):
-        face_emb = face_embeddings[i] if meta["has_face_embedding"] else None
+        face_emb = face_embeddings[i] if meta.get("has_face_embedding", False) else None
         if face_emb is not None and np.allclose(face_emb, 0):
             face_emb = None
 
-        emb = EmbeddingSet(
-            embedding_id=meta["embedding_id"],
-            user_id=meta["user_id"],
-            body_embedding=body_embeddings[i],
+        # Convert modality string to enum
+        modality_str = meta.get("modality", "BODY")
+        if modality_str in ["BODY", "FACE", "BODY_FACE"]:
+            modality = CoreModality[modality_str]
+        else:
+            modality = CoreModality.BODY
+
+        # Parse bbox
+        bbox = meta.get("bbox")
+        if bbox and isinstance(bbox, list):
+            bbox = tuple(bbox)
+        else:
+            bbox = (0, 0, 0, 0)
+
+        # Parse face_bbox
+        face_bbox = meta.get("face_bbox")
+        if face_bbox and isinstance(face_bbox, list):
+            face_bbox = tuple(face_bbox)
+
+        emb = PersonEmbedding(
+            # Core fields
+            embedding_vector=body_embeddings[i],
+            subject_confidence=meta.get("subject_confidence", meta.get("quality_score", 1.0)),
+            bbox=bbox,
+            normalization=meta.get("normalization", "resnet"),
+            model_profile_id=meta.get("model_profile_id", meta.get("embedding_provider", "unknown")),
+            hardware=meta.get("hardware", "cpu"),
+            timestamp=datetime.fromisoformat(meta["timestamp"]) if "timestamp" in meta else datetime.fromisoformat(meta.get("generated_at", datetime.now().isoformat())),
+            source_image_id=meta.get("source_image_id") or meta.get("image_id"),
+            # Multi-modal fields
+            modality=modality,
             face_embedding=face_emb,
-            image_id=meta.get("image_id"),
+            face_confidence=meta.get("face_confidence"),
+            face_bbox=face_bbox,
+            # User gallery fields
+            user_id=meta.get("user_id"),
+            embedding_id=meta.get("embedding_id"),
             cluster_id=meta.get("cluster_id"),
-            embedding_provider=meta["embedding_provider"],
-            embedding_version=meta["embedding_version"],
-            quality_score=meta["quality_score"],
-            generated_at=datetime.fromisoformat(meta["generated_at"]),
+            quality_score=meta.get("quality_score"),
+            embedding_provider=meta.get("embedding_provider"),
+            embedding_version=meta.get("embedding_version"),
+            # Metadata
             metadata=meta.get("metadata", {}),
         )
         embeddings.append(emb)
 
-    logger.info(f"Deserialized {len(embeddings)} embedding sets from {input_dir}")
+    logger.info(f"Deserialized {len(embeddings)} person embeddings from {input_dir}")
     return embeddings
 
 
@@ -543,56 +581,6 @@ def validate_image_asset(image: ImageAsset) -> tuple[bool, list[str]]:
     # Rule 4: Modality must be valid
     if image.modality not in [Modality.BODY, Modality.FACE, Modality.UNKNOWN]:
         errors.append(f"Invalid modality for '{image.image_id}': {image.modality}")
-
-    is_valid = len(errors) == 0
-    return is_valid, errors
-
-
-def validate_embedding_set(embedding: EmbeddingSet) -> tuple[bool, list[str]]:
-    """
-    Validate EmbeddingSet business rules.
-
-    Business Rules:
-    1. Body embedding must be present and have valid dimensions
-    2. Quality score must be in [0.0, 1.0]
-    3. At least one embedding type (body or face) must be present
-    4. Face embedding dimensions must be valid if present
-
-    Args:
-        embedding: EmbeddingSet instance to validate
-
-    Returns:
-        Tuple of (is_valid, error_messages)
-    """
-    errors = []
-
-    # Rule 1: Body embedding validation
-    if embedding.body_embedding is None or len(embedding.body_embedding) == 0:
-        errors.append(
-            f"Embedding '{embedding.embedding_id}' must have a body embedding"
-        )
-    elif len(embedding.body_embedding) < 512:
-        errors.append(
-            f"Body embedding dimension for '{embedding.embedding_id}' is too small: {len(embedding.body_embedding)}"
-        )
-
-    # Rule 2: Quality score validation
-    if not 0.0 <= embedding.quality_score <= 1.0:
-        errors.append(
-            f"Quality score for '{embedding.embedding_id}' must be in [0.0, 1.0]"
-        )
-
-    # Rule 3: At least one embedding type
-    if embedding.body_embedding is None and embedding.face_embedding is None:
-        errors.append(
-            f"Embedding '{embedding.embedding_id}' must have at least one embedding type"
-        )
-
-    # Rule 4: Face embedding validation if present
-    if embedding.face_embedding is not None and len(embedding.face_embedding) < 128:
-        errors.append(
-            f"Face embedding dimension for '{embedding.embedding_id}' is too small: {len(embedding.face_embedding)}"
-        )
 
     is_valid = len(errors) == 0
     return is_valid, errors

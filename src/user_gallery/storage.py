@@ -15,9 +15,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
+from ..entities import PersonEmbedding
 from .config import UserGalleryConfig
 from .models import (
-    EmbeddingSet,
     GalleryStatus,
     ImageAsset,
     UserGallery,
@@ -25,11 +25,11 @@ from .models import (
 )
 from .utils import (
     create_gallery_storage_structure,
-    deserialize_embedding_sets,
+    deserialize_person_embeddings,
     deserialize_image_assets,
     deserialize_user_gallery,
     enforce_gallery_business_rules,
-    serialize_embedding_sets,
+    serialize_person_embeddings,
     serialize_image_assets,
     serialize_user_gallery,
 )
@@ -279,7 +279,7 @@ class GalleryStorageManager:
 
                 logger.info(f"Permanently deleted gallery '{user_id}'")
             else:
-                # Mark as inactive
+            # Mark as inactive
                 self.update_gallery(user_id, status=GalleryStatus.INACTIVE)
                 logger.info(f"Marked gallery '{user_id}' as inactive")
 
@@ -375,13 +375,13 @@ class GalleryStorageManager:
             logger.debug(f"Loaded {len(images)} image assets for user '{user_id}'")
             return images
 
-    def save_embeddings(self, user_id: str, embeddings: list[EmbeddingSet]) -> None:
+    def save_embeddings(self, user_id: str, embeddings: list[PersonEmbedding]) -> None:
         """
-        Save embedding sets for a user gallery.
+        Save person embeddings for a user gallery.
 
         Args:
             user_id: User identifier
-            embeddings: List of embedding sets to save
+            embeddings: List of person embeddings to save
 
         Raises:
             ValueError: If gallery doesn't exist
@@ -393,18 +393,18 @@ class GalleryStorageManager:
             gallery_dir = self.base_storage_path / user_id
             embeddings_dir = gallery_dir / "embeddings"
 
-            serialize_embedding_sets(embeddings, embeddings_dir, save_format="npz")
-            logger.debug(f"Saved {len(embeddings)} embedding sets for user '{user_id}'")
+            serialize_person_embeddings(embeddings, embeddings_dir, save_format="npz")
+            logger.debug(f"Saved {len(embeddings)} person embeddings for user '{user_id}'")
 
-    def load_embeddings(self, user_id: str) -> list[EmbeddingSet]:
+    def load_embeddings(self, user_id: str) -> list[PersonEmbedding]:
         """
-        Load embedding sets for a user gallery.
+        Load person embeddings for a user gallery.
 
         Args:
             user_id: User identifier
 
         Returns:
-            List of embedding sets
+            List of person embeddings
 
         Raises:
             ValueError: If gallery doesn't exist
@@ -422,9 +422,9 @@ class GalleryStorageManager:
                 logger.debug(f"No embeddings found for user '{user_id}'")
                 return []
 
-            embeddings = deserialize_embedding_sets(embeddings_dir, load_format="npz")
+            embeddings = deserialize_person_embeddings(embeddings_dir, load_format="npz")
             logger.debug(
-                f"Loaded {len(embeddings)} embedding sets for user '{user_id}'"
+                f"Loaded {len(embeddings)} person embeddings for user '{user_id}'"
             )
             return embeddings
 
