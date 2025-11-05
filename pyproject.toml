@@ -42,6 +42,12 @@ faiss-cpu = [
     "faiss-cpu>=1.12.0",
 ]
 
+# FastAPI service dependencies
+api-service = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+]
 
 # Development dependencies
 dev = [
@@ -55,8 +61,29 @@ dev = [
 all = [
     "faiss-gpu-cu12>=1.12.0",
     "ultralytics>=8.3.224",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.8.0",
     "mypy>=1.0.0",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]  # Line length handled by formatter
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
