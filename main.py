@@ -4,18 +4,23 @@ from src.api import DeepPerson
 
 
 SAMPLE_IMAGE = Path("back.jpg")
-GALLERY_STORAGE = Path("galleries")
 
 
 def main() -> None:
-    """Unified DeepPerson API usage example with User Gallery system."""
+    """DeepPerson Core API Usage Examples.
+
+    Demonstrates the stateless API for:
+    - Multi-modal person detection and embedding generation
+    - Identity verification between images
+    - Batch processing capabilities
+    """
     if not SAMPLE_IMAGE.exists():
         print(
             "Sample image missing. Place 'back.jpg' in the repository root to run the demo."
         )
         return
 
-    # Initialize DeepPerson (single entry point)
+    # Initialize DeepPerson
     dp = DeepPerson()
 
     # Step 1: Generate multi-modal embeddings from the sample image
@@ -40,69 +45,56 @@ def main() -> None:
     face_embedding = primary_subject.get("face_embedding")
     if face_embedding is not None:
         print("Face embedding dim:", face_embedding.shape)
-    
-    print("representation:", representation)
 
-    # Step 2: Create a user gallery with the detected person
-    print("\n=== Step 2: Create User Gallery ===")
-    GALLERY_STORAGE.mkdir(parents=True, exist_ok=True)
+    print("Model info:", representation["model_info"])
+    if representation.get("face_model_info"):
+        print("Face model info:", representation["face_model_info"])
 
-    try:
-        gallery_result = dp.create_gallery(
-            user_id="demo_user",
-            image_paths=[SAMPLE_IMAGE],
-            name="Demo User",
-            metadata={"department": "R&D"},
-            modality_hints={str(SAMPLE_IMAGE): "BODY"},
-            gallery_storage_path=GALLERY_STORAGE,
-        )
-        print(
-            f"Created gallery for user '{gallery_result['user_id']}' "
-            f"with {gallery_result['total_images']} image(s)"
-        )
-    except ValueError as exc:
-        print(f"Gallery already exists or error: {exc}")
-
-    # Step 3: Generate embeddings for the user gallery
-    print("\n=== Step 3: Generate Gallery Embeddings ===")
-    emb_result = dp.represent_gallery(
-        user_id="demo_user",
-        generate_face_embeddings=True,
-        gallery_storage_path=GALLERY_STORAGE,
-    )
-    print(
-        f"Generated {emb_result['generated_embeddings']} embeddings "
-        f"({emb_result['face_embeddings_generated']} with face)"
-    )
-
-    # Step 4: Demonstrate verification using the new verify API
-    print("\n=== Step 4: Verify Images ===")
-    # Verify the same image against itself (should return verified=True)
+    # Step 2: Verify images (self-verification)
+    print("\n=== Step 2: Verify Images (Self-Verification) ===")
     verification_result = dp.verify(SAMPLE_IMAGE, SAMPLE_IMAGE)
     print(f"Self-verification result: {verification_result['verified']}")
     print(f"Distance: {verification_result['distance']:.4f}")
     print(f"Threshold: {verification_result['threshold']:.4f}")
     print(f"Model used: {verification_result['model']}")
     print(f"Fusion used: {verification_result.get('used_fusion', False)}")
+    print(f"Modality available: {verification_result['modality_available']}")
     if verification_result.get('fusion_score') is not None:
         print(f"Fusion score: {verification_result['fusion_score']:.4f}")
     if verification_result.get('warnings'):
         print(f"Warnings: {verification_result['warnings']}")
 
-    # Step 5: Check gallery information
-    print("\n=== Step 5: Gallery Information ===")
-    if dp.gallery_exists("demo_user", gallery_storage_path=GALLERY_STORAGE):
-        gallery_info = dp.get_gallery("demo_user", gallery_storage_path=GALLERY_STORAGE)
-        print(f"Gallery status: {gallery_info['status']}")
-        print(f"Total images: {gallery_info['total_images']}")
-        print(f"Modality breakdown: {gallery_info['modality_breakdown']}")
+    # Step 3: Batch processing example
+    print("\n=== Step 3: Batch Processing ===")
+    # Create dummy image paths (in real usage, these would be actual image files)
+    image_paths = [SAMPLE_IMAGE] * 3  # Using same image for demo
+    batch_result = dp.represent(
+        image_paths,
+        generate_face_embeddings=False,  # Disable for faster demo
+        batch_size=4,
+    )
+    print(f"Batch processed {len(image_paths)} image(s)")
+    print(f"Total subjects detected: {len(batch_result['subjects'])}")
+    print("Model info:", batch_result["model_info"])
 
-    # Step 6: List all galleries
-    print("\n=== Step 6: List All Galleries ===")
-    all_galleries = dp.list_galleries(gallery_storage_path=GALLERY_STORAGE)
-    print(f"Found {len(all_galleries)} gallery/galleries:")
-    for gallery in all_galleries:
-        print(f"  - {gallery['user_id']}: {gallery.get('name', 'N/A')}")
+    # Step 4: Different distance metrics
+    print("\n=== Step 4: Verification with Different Metrics ===")
+    metrics = ["cosine", "euclidean", "euclidean_l2"]
+    for metric in metrics:
+        result = dp.verify(
+            SAMPLE_IMAGE,
+            SAMPLE_IMAGE,
+            distance_metric=metric,
+        )
+        print(f"{metric:15s} - Distance: {result['distance']:.4f}, "
+              f"Verified: {result['verified']}")
+
+    print("\n=== Core API Summary ===")
+    print("✓ represent(): Generate multi-modal embeddings (body + optional face)")
+    print("✓ verify(): Identity verification with fusion scoring")
+    print("✓ Batch processing support")
+    print("✓ Multiple distance metrics (cosine, euclidean, euclidean_l2)")
+    print("\nAll operations are stateless - no gallery management required!")
 
 
 if __name__ == "__main__":
