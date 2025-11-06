@@ -111,7 +111,7 @@ Gallery management methods:
 
 ### Key Design Patterns
 
-- **Factory Pattern**: `DetectorFactory` (detectors.py), `SearcherFactory` (search.py)
+- **Factory Pattern**: `DetectorFactory` (detectors.py)
 - **Registry Pattern**: Centralized model profile management with lazy loading (`registry.py`)
 - **Pipeline Pattern**: Sequential processing with independent testability
 - **Façade Pattern**: `DeepPerson` class orchestrates all functionality

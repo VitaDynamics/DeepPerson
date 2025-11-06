@@ -16,7 +16,7 @@ from .detectors import DetectorFactory, PersonDetector
 from .embeddings import BodyEmbeddingGenerator
 from .entities import PersonEmbedding
 from .registry import get_registry
-from .search import compute_distance
+from .distance import compute_distance
 from .fusion import FusionScorer
 from .utils import select_device
 
