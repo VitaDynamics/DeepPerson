@@ -488,3 +488,40 @@ class BatchResult:
                 f"batch_metadata.failed_images ({self.batch_metadata.failed_images}) "
                 f"must equal error_count ({self.error_count})"
             )
+
+
+@dataclass
+class ComparisonResult:
+    """
+    Result of a verification operation.
+    Attributes:
+        verified: Boolean indicating if the two images are of the same person.
+        distance: The distance between the two embeddings.
+        threshold: The threshold used for verification.
+        distance_metric: The distance metric used.
+        model: The model used for the verification.
+        detector_backend: The detector backend used.
+        facial_areas: The facial areas of the two images.
+        body_distance: The distance between the body embeddings.
+        face_distance: The distance between the face embeddings.
+        fusion_score: The fusion score of the two embeddings.
+        used_fusion: Whether fusion was used.
+        modality_available: The available modalities.
+        warnings: A list of warnings.
+    """
+
+    verified: bool
+    distance: float
+    threshold: float
+    distance_metric: str
+    model: str
+    detector_backend: str
+    facial_areas: dict
+    body_distance: float
+    face_distance: float | None
+    fusion_score: float | None
+    face_weight: float | None
+    body_weight: float | None
+    used_fusion: bool
+    modality_available: dict
+    warnings: list[str] | None

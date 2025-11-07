@@ -176,9 +176,7 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(pil_img)
 
-        assert "subjects" in result
-        assert "model_info" in result
-        assert isinstance(result["subjects"], list)
+        assert isinstance(result, list)
 
         # Verify detector was called with PIL Image
         mock_dp.detector.detect.assert_called_once()
@@ -191,8 +189,7 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(numpy_img)
 
-        assert "subjects" in result
-        assert isinstance(result["subjects"], list)
+        assert isinstance(result, list)
 
     def test_represent_batch_pil_images(self, mock_dp):
         """Test represent() with list of PIL Images."""
@@ -200,7 +197,7 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(pil_images)
 
-        assert "subjects" in result
+        assert isinstance(result, list)
         # With batch processing, detect_batch should be called once
         mock_dp.detector.detect_batch.assert_called_once()
 
@@ -212,7 +209,7 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(numpy_images)
 
-        assert "subjects" in result
+        assert isinstance(result, list)
         # With batch processing, detect_batch should be called once
         mock_dp.detector.detect_batch.assert_called_once()
 
@@ -245,15 +242,13 @@ class TestVerifyImageInputs:
 
             # Mock represent() to return fake embeddings
             def mock_represent(*args, **kwargs):
-                return {
-                    "subjects": [
-                        {
-                            "embedding": np.random.rand(512).astype(np.float32),
-                            "metadata": {"bbox": [0, 0, 100, 100], "confidence": 0.95},
-                        }
-                    ],
-                    "model_info": {"name": "test_model"},
-                }
+                return [
+                    Mock(
+                        embedding_vector=np.random.rand(512).astype(np.float32),
+                        face_embedding=None,
+                        bbox=[0, 0, 100, 100],
+                    )
+                ]
 
             dp.represent = Mock(side_effect=mock_represent)
             dp.registry = Mock()
@@ -268,10 +263,10 @@ class TestVerifyImageInputs:
 
         result = mock_dp.verify(pil_img1, pil_img2)
 
-        assert "verified" in result
-        assert "distance" in result
-        assert "threshold" in result
-        assert isinstance(result["verified"], bool)
+        from src.entities import ComparisonResult
+
+        assert isinstance(result, ComparisonResult)
+        assert isinstance(result.verified, bool)
 
         # Verify represent was called twice
         assert mock_dp.represent.call_count == 2
@@ -283,7 +278,9 @@ class TestVerifyImageInputs:
 
         result = mock_dp.verify(numpy_img1, numpy_img2)
 
-        assert "verified" in result
+        from src.entities import ComparisonResult
+
+        assert isinstance(result, ComparisonResult)
         assert mock_dp.represent.call_count == 2
 
     def test_verify_mixed_pil_and_path(self, mock_dp, tmp_path):
@@ -297,7 +294,9 @@ class TestVerifyImageInputs:
 
         result = mock_dp.verify(pil_img, str(img_path))
 
-        assert "verified" in result
+        from src.entities import ComparisonResult
+
+        assert isinstance(result, ComparisonResult)
         assert mock_dp.represent.call_count == 2
 
 
@@ -334,8 +333,7 @@ class TestBatchRepresentImageInputs:
 
         result = mock_dp.represent(pil_images)
 
-        assert "subjects" in result
-        assert "model_info" in result
+        assert isinstance(result, list)
         # With batch processing and detect_batch available, it should be called once
         mock_dp.detector.detect_batch.assert_called_once()
 
@@ -347,7 +345,7 @@ class TestBatchRepresentImageInputs:
 
         result = mock_dp.represent(numpy_images)
 
-        assert "subjects" in result
+        assert isinstance(result, list)
         # With batch processing and detect_batch available, it should be called once
         # (Note: The mock returns 3 empty lists, but we're only sending 2 images)
         # So we need to update the mock to match the input
@@ -365,8 +363,8 @@ class TestBatchRepresentImageInputs:
         """Test represent() with empty list returns empty results."""
         result = mock_dp.represent([])
 
-        assert "subjects" in result
-        assert len(result["subjects"]) == 0
+        assert isinstance(result, list)
+        assert len(result) == 0
 
 
 class TestSourceIDGeneration:
@@ -420,8 +418,8 @@ class TestSourceIDGeneration:
 
         result = mock_dp.represent(pil_img)
 
-        assert len(result["subjects"]) > 0
-        source_id = result["subjects"][0]["metadata"]["source_image"]
+        assert len(result) > 0
+        source_id = result[0].source_image_id
         assert source_id.startswith("in_memory_")
 
     def test_source_id_for_numpy_array(self, mock_dp):
@@ -430,8 +428,8 @@ class TestSourceIDGeneration:
 
         result = mock_dp.represent(numpy_img)
 
-        assert len(result["subjects"]) > 0
-        source_id = result["subjects"][0]["metadata"]["source_image"]
+        assert len(result) > 0
+        source_id = result[0].source_image_id
         assert source_id.startswith("in_memory_")
 
     def test_source_id_uniqueness(self):
