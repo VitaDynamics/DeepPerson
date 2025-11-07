@@ -12,6 +12,6 @@ Quick Start:
 
 __version__ = "0.1.0"
 
-from src.api import DeepPerson
+from .api import DeepPerson
 
 __all__ = ["DeepPerson", "__version__"]

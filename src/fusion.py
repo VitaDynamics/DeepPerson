@@ -12,7 +12,7 @@ consistent multi-modal person matching.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -70,10 +70,10 @@ class FusionScorer:
     def compute_fusion_score(
         self,
         body_score: float,
-        face_score: Optional[float],
+        face_score: float | None,
         body_confidence: float = 1.0,
-        face_confidence: Optional[float] = None,
-        custom_weights: Optional[dict[str, float]] = None,
+        face_confidence: float | None = None,
+        custom_weights: dict[str, float] | None = None,
     ) -> tuple[float, dict[str, Any]]:
         """
         Compute fused similarity score from body and face scores.
@@ -174,10 +174,10 @@ class FusionScorer:
     def compute_batch_fusion_scores(
         self,
         body_scores: np.ndarray,
-        face_scores: Optional[np.ndarray],
-        body_confidences: Optional[np.ndarray] = None,
-        face_confidences: Optional[np.ndarray] = None,
-        custom_weights: Optional[dict[str, float]] = None,
+        face_scores: np.ndarray | None,
+        body_confidences: np.ndarray | None = None,
+        face_confidences: np.ndarray | None = None,
+        custom_weights: dict[str, float] | None = None,
     ) -> tuple[np.ndarray, list[dict[str, Any]]]:
         """
         Compute fusion scores for multiple candidates.

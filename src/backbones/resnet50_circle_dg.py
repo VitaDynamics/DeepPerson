@@ -11,7 +11,6 @@ Reference:
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -23,14 +22,14 @@ logger = logging.getLogger(__name__)
 def weights_init_kaiming(m):
     """Kaiming initialization for linear and conv layers."""
     classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
-        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_out')
+    if classname.find("Linear") != -1:
+        nn.init.kaiming_normal_(m.weight, a=0, mode="fan_out")
         nn.init.constant_(m.bias, 0.0)
-    elif classname.find('Conv') != -1:
-        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in')
+    elif classname.find("Conv") != -1:
+        nn.init.kaiming_normal_(m.weight, a=0, mode="fan_in")
         if m.bias is not None:
             nn.init.constant_(m.bias, 0.0)
-    elif classname.find('BatchNorm') != -1:
+    elif classname.find("BatchNorm") != -1:
         if m.affine:
             nn.init.constant_(m.weight, 1.0)
             nn.init.constant_(m.bias, 0.0)
@@ -52,7 +51,7 @@ class ClassBlock(nn.Module):
         relu: bool = False,
         bnorm: bool = True,
         linear: int = 512,
-        return_f: bool = False
+        return_f: bool = False,
     ):
         """
         Initialize ClassBlock.
@@ -122,7 +121,7 @@ class FtNet(nn.Module):
         stride: int = 2,
         circle: bool = False,
         ibn: bool = False,
-        linear_num: int = 512
+        linear_num: int = 512,
     ):
         """
         Initialize ft_net.
@@ -141,10 +140,14 @@ class FtNet(nn.Module):
         if ibn:
             # IBN-Net variant (requires torch.hub access)
             try:
-                model_ft = torch.hub.load('XingangPan/IBN-Net', 'resnet50_ibn_a', pretrained=False)
+                model_ft = torch.hub.load(
+                    "XingangPan/IBN-Net", "resnet50_ibn_a", pretrained=False
+                )
                 logger.info("Using IBN-Net ResNet-50 variant")
             except Exception as e:
-                logger.warning(f"Failed to load IBN-Net, falling back to standard ResNet-50: {e}")
+                logger.warning(
+                    f"Failed to load IBN-Net, falling back to standard ResNet-50: {e}"
+                )
                 model_ft = models.resnet50(pretrained=False)
         else:
             model_ft = models.resnet50(pretrained=False)
@@ -164,7 +167,7 @@ class FtNet(nn.Module):
             class_num,
             droprate,
             linear=linear_num,
-            return_f=circle  # Return features for Circle loss / inference
+            return_f=circle,  # Return features for Circle loss / inference
         )
 
     def forward(self, x):
@@ -190,12 +193,12 @@ class FtNet(nn.Module):
 
 
 def load_model(
-    weights_path: Optional[Path] = None,
+    weights_path: Path | None = None,
     device: torch.device = torch.device("cpu"),
     feature_dim: int = 512,
     stride: int = 2,
     ibn: bool = False,
-    use_model_manager: bool = True
+    use_model_manager: bool = True,
 ) -> nn.Module:
     """
     Load ft_net model for inference.
@@ -221,14 +224,18 @@ def load_model(
     if use_model_manager and weights_path is None:
         try:
             from ..model_manager import get_model_manager
+
             model_manager = get_model_manager()
             weights_path = model_manager.ensure_backbone_weights("resnet50_circle_dg")
 
-
         except ImportError:
-            logger.warning("model_manager not available, falling back to manual weights_path")
+            logger.warning(
+                "model_manager not available, falling back to manual weights_path"
+            )
             if weights_path is None:
-                raise ValueError("weights_path must be provided when model_manager is not available")
+                raise ValueError(
+                    "weights_path must be provided when model_manager is not available"
+                )
     else:
         logger.info(f"Loading ft_net from {weights_path}")
 
@@ -247,7 +254,7 @@ def load_model(
         stride=stride,
         circle=True,  # Return features only
         ibn=ibn,
-        linear_num=linear_num
+        linear_num=linear_num,
     )
 
     # Load weights
@@ -262,10 +269,10 @@ def load_model(
 
         # Handle different checkpoint formats
         if isinstance(checkpoint, dict):
-            if 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            elif 'model' in checkpoint:
-                state_dict = checkpoint['model']
+            if "state_dict" in checkpoint:
+                state_dict = checkpoint["state_dict"]
+            elif "model" in checkpoint:
+                state_dict = checkpoint["model"]
             else:
                 state_dict = checkpoint
         else:

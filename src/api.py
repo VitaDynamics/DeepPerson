@@ -308,7 +308,11 @@ class DeepPerson:
             # Handle no detections
             if len(detections) == 0:
                 # Extract display name from source_id
-                display_name = Path(source_id).name if not source_id.startswith("in_memory_") else source_id
+                display_name = (
+                    Path(source_id).name
+                    if not source_id.startswith("in_memory_")
+                    else source_id
+                )
                 warning_msg = f"No person detected in {display_name}"
                 logger.warning(warning_msg)
                 warnings_list.append(warning_msg)
@@ -365,6 +369,7 @@ class DeepPerson:
                 if face_emb and face_emb.face_embedding is not None:
                     # Create multi-modal embedding
                     from .entities import Modality
+
                     combined_emb = PersonEmbedding(
                         embedding_vector=body_emb.embedding_vector,
                         subject_confidence=body_emb.subject_confidence,
@@ -524,6 +529,7 @@ class DeepPerson:
             >>> # Use different metric
             >>> result = dp.verify(pil_img1, pil_img2, distance_metric="euclidean")
         """
+
         # Generate display names for logging
         def _get_display_name(img_input: ImageInput) -> str:
             if isinstance(img_input, (str, Path)):
@@ -667,7 +673,9 @@ class DeepPerson:
         if face_embedding1 is not None and face_embedding2 is not None:
             try:
                 # Compute face distance
-                face_distance = compute_distance(face_embedding1, face_embedding2, metric=distance_metric)
+                face_distance = compute_distance(
+                    face_embedding1, face_embedding2, metric=distance_metric
+                )
 
                 # Convert distances to similarities for fusion scoring (0-1 range, higher = more similar)
                 body_similarity = max(0.0, 1.0 - body_distance)
@@ -730,10 +738,16 @@ class DeepPerson:
             "facial_areas": {"img1": facial_area1, "img2": facial_area2},
             # Enhanced fusion fields
             "body_distance": float(body_distance),
-            "face_distance": float(face_distance) if face_distance is not None else None,
+            "face_distance": float(face_distance)
+            if face_distance is not None
+            else None,
             "fusion_score": float(fusion_score) if fusion_score is not None else None,
-            "face_weight": fusion_metadata.get("face_weight", 0.5) if used_fusion else 0.5,
-            "body_weight": fusion_metadata.get("body_weight", 0.5) if used_fusion else 0.5,
+            "face_weight": fusion_metadata.get("face_weight", 0.5)
+            if used_fusion
+            else 0.5,
+            "body_weight": fusion_metadata.get("body_weight", 0.5)
+            if used_fusion
+            else 0.5,
             "used_fusion": used_fusion,
             "modality_available": modality_available,
         }
@@ -865,8 +879,7 @@ class DeepPerson:
                     )
 
                 all_detections = self.detector.detect_batch(
-                    images=valid_images,
-                    confidence_threshold=confidence_threshold
+                    images=valid_images, confidence_threshold=confidence_threshold
                 )
 
                 # Re-inject empty detections for failed normalizations
@@ -883,14 +896,18 @@ class DeepPerson:
             except RuntimeError as e:
                 # Handle CUDA OOM errors
                 if "out of memory" in str(e).lower():
-                    logger.warning("CUDA OOM during detection, cleaning up and retrying with smaller batches")
+                    logger.warning(
+                        "CUDA OOM during detection, cleaning up and retrying with smaller batches"
+                    )
                     cleanup_memory(self.device)
                     # Retry with sequential detection
                     all_detections = []
                     for pil_img in normalized_images:
                         if pil_img is not None:
                             try:
-                                dets = self.detector.detect(pil_img, confidence_threshold)
+                                dets = self.detector.detect(
+                                    pil_img, confidence_threshold
+                                )
                                 all_detections.append(dets)
                             except Exception:
                                 all_detections.append([])
@@ -902,12 +919,14 @@ class DeepPerson:
                 logger.error(f"Batch detection failed: {e}")
                 # Create error results for all images
                 for i, source_id in enumerate(source_ids_list):
-                    results.append({
-                        "subjects": [],
-                        "image_index": i,
-                        "processing_status": "error",
-                        "error_message": f"Detection failed: {str(e)}"
-                    })
+                    results.append(
+                        {
+                            "subjects": [],
+                            "image_index": i,
+                            "processing_status": "error",
+                            "error_message": f"Detection failed: {str(e)}",
+                        }
+                    )
                 error_count = len(image_paths)
                 all_detections = [[] for _ in image_paths]
                 # Clean up memory before continuing
@@ -920,24 +939,28 @@ class DeepPerson:
             try:
                 # Check if image normalization failed
                 if pil_img is None:
-                    results.append({
-                        "subjects": [],
-                        "image_index": image_index,
-                        "processing_status": "error",
-                        "error_message": "Image normalization failed"
-                    })
+                    results.append(
+                        {
+                            "subjects": [],
+                            "image_index": image_index,
+                            "processing_status": "error",
+                            "error_message": "Image normalization failed",
+                        }
+                    )
                     error_count += 1
                     continue
 
                 if len(detections) == 0:
                     # No persons detected
-                    results.append({
-                        "subjects": [],
-                        "model_info": self._get_model_info(),
-                        "image_index": image_index,
-                        "processing_status": "success",
-                        "error_message": None
-                    })
+                    results.append(
+                        {
+                            "subjects": [],
+                            "model_info": self._get_model_info(),
+                            "image_index": image_index,
+                            "processing_status": "success",
+                            "error_message": None,
+                        }
+                    )
                     success_count += 1
                     continue
 
@@ -957,20 +980,24 @@ class DeepPerson:
                             confidences=confidences,
                             normalize_method=normalization,
                             batch_size=batch_size,
-                            show_progress=False
+                            show_progress=False,
                         )
                     except RuntimeError as e:
                         if "out of memory" in str(e).lower():
-                            logger.warning(f"CUDA OOM during embedding for image {image_index}, cleaning up and retrying")
+                            logger.warning(
+                                f"CUDA OOM during embedding for image {image_index}, cleaning up and retrying"
+                            )
                             cleanup_memory(self.device)
                             # Retry with smaller batch size
-                            embeddings = self.embedding_pipeline.generate_embeddings_batch(
-                                images=person_crops,
-                                bboxes=bboxes,
-                                confidences=confidences,
-                                normalize_method=normalization,
-                                batch_size=max(1, batch_size // 2),
-                                show_progress=False
+                            embeddings = (
+                                self.embedding_pipeline.generate_embeddings_batch(
+                                    images=person_crops,
+                                    bboxes=bboxes,
+                                    confidences=confidences,
+                                    normalize_method=normalization,
+                                    batch_size=max(1, batch_size // 2),
+                                    show_progress=False,
+                                )
                             )
                         else:
                             raise
@@ -985,7 +1012,7 @@ class DeepPerson:
                             "bbox": embedding.bbox,
                             "normalization": embedding.normalization,
                         },
-                        "modality": embedding.modality.value
+                        "modality": embedding.modality.value,
                     }
                     subjects.append(subject)
 
@@ -995,20 +1022,24 @@ class DeepPerson:
                     "model_info": self._get_model_info(),
                     "image_index": image_index,
                     "processing_status": "success",
-                    "error_message": None
+                    "error_message": None,
                 }
 
                 results.append(result)
                 success_count += 1
 
             except Exception as e:
-                logger.error(f"Failed to process image {image_index} ({source_id}): {e}")
-                results.append({
-                    "subjects": [],
-                    "image_index": image_index,
-                    "processing_status": "error",
-                    "error_message": str(e)
-                })
+                logger.error(
+                    f"Failed to process image {image_index} ({source_id}): {e}"
+                )
+                results.append(
+                    {
+                        "subjects": [],
+                        "image_index": image_index,
+                        "processing_status": "error",
+                        "error_message": str(e),
+                    }
+                )
                 error_count += 1
 
             # Periodic cleanup for very large batches (every 20 images)
@@ -1036,11 +1067,13 @@ class DeepPerson:
 
         # Create batch metadata
         hardware_info = get_hardware_info(self.device)
-        hardware_info.update({
-            "initial_memory_gb": initial_memory.get("allocated_gb", 0.0),
-            "final_memory_gb": final_memory.get("allocated_gb", 0.0),
-            "peak_memory_gb": final_memory.get("reserved_gb", 0.0),
-        })
+        hardware_info.update(
+            {
+                "initial_memory_gb": initial_memory.get("allocated_gb", 0.0),
+                "final_memory_gb": final_memory.get("allocated_gb", 0.0),
+                "peak_memory_gb": final_memory.get("reserved_gb", 0.0),
+            }
+        )
 
         batch_metadata = BatchMetadata(
             batch_id=str(uuid.uuid4()),
@@ -1055,7 +1088,7 @@ class DeepPerson:
                 "detector": self.detector_backend,
                 "body_model": self.model_name,
             },
-            hardware_info=hardware_info
+            hardware_info=hardware_info,
         )
 
         # Create batch result

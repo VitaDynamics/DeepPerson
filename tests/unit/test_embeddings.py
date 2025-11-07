@@ -4,13 +4,13 @@ Unit tests for body embedding generation with batch support.
 Tests both single-image and batch embedding generation.
 """
 
+import numpy as np
 import pytest
 import torch
-import numpy as np
 from PIL import Image
 
 from src.embeddings import BodyEmbeddingGenerator, create_embedding_pipeline
-from src.entities import PersonEmbedding, Modality
+from src.entities import Modality, PersonEmbedding
 
 
 @pytest.fixture
@@ -31,10 +31,7 @@ def sample_person_images(sample_person_image):
 def embedding_generator():
     """Create a BodyEmbeddingGenerator for testing."""
     device = torch.device("cpu")  # Use CPU for tests
-    return BodyEmbeddingGenerator(
-        model_name="resnet50_circle_dg",
-        device=device
-    )
+    return BodyEmbeddingGenerator(model_name="resnet50_circle_dg", device=device)
 
 
 class TestBodyEmbeddingGenerator:
@@ -85,7 +82,7 @@ class TestBodyEmbeddingGenerator:
             image=sample_person_image,
             bbox=bbox,
             confidence=confidence,
-            normalize_method="resnet"
+            normalize_method="resnet",
         )
 
         # Check embedding object
@@ -95,11 +92,7 @@ class TestBodyEmbeddingGenerator:
         assert embedding.bbox == bbox
         assert embedding.modality == Modality.BODY
 
-    def test_generate_embeddings_batch(
-        self,
-        embedding_generator,
-        sample_person_images
-    ):
+    def test_generate_embeddings_batch(self, embedding_generator, sample_person_images):
         """Test generating embeddings for multiple person images."""
         bboxes = [(10, 20, 100, 200) for _ in sample_person_images]
         confidences = [0.95, 0.90, 0.85, 0.92, 0.88]
@@ -109,7 +102,7 @@ class TestBodyEmbeddingGenerator:
             bboxes=bboxes,
             confidences=confidences,
             normalize_method="resnet",
-            batch_size=8
+            batch_size=8,
         )
 
         # Check embeddings list
@@ -125,9 +118,7 @@ class TestBodyEmbeddingGenerator:
             assert embedding.modality == Modality.BODY
 
     def test_batch_embedding_smaller_batch_size(
-        self,
-        embedding_generator,
-        sample_person_images
+        self, embedding_generator, sample_person_images
     ):
         """Test batch embedding with batch_size smaller than num images."""
         bboxes = [(10, 20, 100, 200) for _ in sample_person_images]
@@ -138,7 +129,7 @@ class TestBodyEmbeddingGenerator:
             images=sample_person_images,
             bboxes=bboxes,
             confidences=confidences,
-            batch_size=2
+            batch_size=2,
         )
 
         # Should still get all embeddings
@@ -147,10 +138,7 @@ class TestBodyEmbeddingGenerator:
     def test_batch_embedding_empty_list(self, embedding_generator):
         """Test batch embedding with empty input list."""
         embeddings = embedding_generator.generate_embeddings_batch(
-            images=[],
-            bboxes=[],
-            confidences=[],
-            batch_size=8
+            images=[], bboxes=[], confidences=[], batch_size=8
         )
 
         assert isinstance(embeddings, list)
@@ -165,7 +153,7 @@ class TestBodyEmbeddingGenerator:
             image=sample_person_image,
             bbox=bbox,
             confidence=confidence,
-            normalize_method="resnet"
+            normalize_method="resnet",
         )
 
         # L2 norm should be approximately 1.0 for normalized embeddings
@@ -203,9 +191,7 @@ class TestBatchEmbeddingPerformance:
     """Integration tests for batch embedding performance."""
 
     def test_batch_faster_than_sequential(
-        self,
-        embedding_generator,
-        sample_person_images
+        self, embedding_generator, sample_person_images
     ):
         """
         Test that batch embedding is faster than sequential.
@@ -222,9 +208,7 @@ class TestBatchEmbeddingPerformance:
         sequential_embeddings = []
         for img, bbox, conf in zip(sample_person_images, bboxes, confidences):
             emb = embedding_generator.generate_embedding(
-                image=img,
-                bbox=bbox,
-                confidence=conf
+                image=img, bbox=bbox, confidence=conf
             )
             sequential_embeddings.append(emb)
         sequential_time = time.time() - start
@@ -235,7 +219,7 @@ class TestBatchEmbeddingPerformance:
             images=sample_person_images,
             bboxes=bboxes,
             confidences=confidences,
-            batch_size=8
+            batch_size=8,
         )
         batch_time = time.time() - start
 

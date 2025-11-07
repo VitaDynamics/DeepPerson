@@ -6,9 +6,6 @@ focusing on end-to-end workflows and parameter variations.
 """
 
 import pytest
-from unittest.mock import Mock, patch
-import numpy as np
-from typing import Dict, Any
 
 from src.api import DeepPerson
 

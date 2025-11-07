@@ -9,7 +9,7 @@ EmbeddingGenerator interface for polymorphic use with body embedding generators.
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Literal, Optional, Union
+from typing import Literal
 
 import numpy as np
 from PIL import Image
@@ -61,7 +61,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
 
     def __init__(
         self,
-        model_name: str = "Facenet512", # Default to Facenet512 for better performance
+        model_name: str = "Facenet512",  # Default to Facenet512 for better performance
         detector_backend: str = "opencv",
         enforce_detection: bool = False,
     ):
@@ -85,18 +85,17 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
 
         # Get face model configuration from registry (registers and caches the model)
         from .registry import get_registry
+
         self._registry = get_registry()
         # Note: load_face_model() registers the model configuration but we don't
         # store the config here since it's only needed by the registry's cache
         self._registry.load_face_model(
-            model_name=model_name,
-            detector_backend=detector_backend
+            model_name=model_name, detector_backend=detector_backend
         )
         logger.info(
             f"Initialized FaceEmbeddingGenerator with registry: model={model_name}, "
             f"detector={detector_backend}, feature_dim={self._feature_dim}"
         )
-
 
     def _get_deepface_config(self) -> dict:
         """
@@ -110,7 +109,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
             "model_name": self._model_name,
             "detector_backend": self.detector_backend,
             "enforce_detection": self.enforce_detection,
-            "align": True
+            "align": True,
         }
 
     # ==================== EmbeddingGenerator Interface ====================
@@ -136,8 +135,8 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         bbox: tuple[int, int, int, int],
         confidence: float,
         normalize_method: Literal["base", "resnet", "circle"] = "base",
-        source_image_id: Optional[str] = None,
-        **kwargs
+        source_image_id: str | None = None,
+        **kwargs,
     ) -> PersonEmbedding:
         """
         Generate face embedding from a PIL Image.
@@ -175,6 +174,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         if image_path is None:
             # Save image temporarily
             import tempfile
+
             temp_dir = Path(tempfile.gettempdir()) / "deepperson_faces"
             temp_dir.mkdir(exist_ok=True)
             temp_path = temp_dir / f"temp_{id(image)}.jpg"
@@ -186,15 +186,11 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
             config = self._get_deepface_config()
             from deepface import DeepFace
 
-            result = DeepFace.represent(
-                img_path=image_path,
-                **config
-            )
-
+            result = DeepFace.represent(img_path=image_path, **config)
 
             # Handle no detection
             if not result or len(result) == 0:
-                logger.warning(f"No face detected in image")
+                logger.warning("No face detected in image")
                 if self.enforce_detection:
                     raise ValueError("No face detected in image")
 
@@ -282,15 +278,15 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
 
     def generate_embeddings_batch(
         self,
-        images: List[Image.Image],
-        bboxes: List[tuple[int, int, int, int]],
-        confidences: List[float],
+        images: list[Image.Image],
+        bboxes: list[tuple[int, int, int, int]],
+        confidences: list[float],
         normalize_method: Literal["base", "resnet", "circle"] = "base",
-        source_image_ids: Optional[List[str]] = None,
+        source_image_ids: list[str] | None = None,
         batch_size: int = 16,
         show_progress: bool = False,
-        **kwargs
-    ) -> List[PersonEmbedding]:
+        **kwargs,
+    ) -> list[PersonEmbedding]:
         """
         Generate face embeddings for multiple images.
 
@@ -320,11 +316,17 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
 
         # Validate inputs
         if len(bboxes) != num_images:
-            raise ValueError(f"Mismatch in number of bboxes: {len(bboxes)} != {num_images}")
+            raise ValueError(
+                f"Mismatch in number of bboxes: {len(bboxes)} != {num_images}"
+            )
         if len(confidences) != num_images:
-            raise ValueError(f"Mismatch in number of confidences: {len(confidences)} != {num_images}")
+            raise ValueError(
+                f"Mismatch in number of confidences: {len(confidences)} != {num_images}"
+            )
         if len(source_image_ids) != num_images:
-            raise ValueError(f"Mismatch in number of source IDs: {len(source_image_ids)} != {num_images}")
+            raise ValueError(
+                f"Mismatch in number of source IDs: {len(source_image_ids)} != {num_images}"
+            )
 
         embeddings = []
 
@@ -332,6 +334,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         iterator = enumerate(zip(images, bboxes, confidences, source_image_ids))
         if show_progress:
             from tqdm import tqdm
+
             iterator = tqdm(list(iterator), desc="Generating face embeddings")
 
         # Process images sequentially (DeepFace limitation)
@@ -343,7 +346,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
                     confidence=conf,
                     normalize_method=normalize_method,
                     source_image_id=source_id,
-                    **kwargs
+                    **kwargs,
                 )
                 embeddings.append(embedding)
             except Exception as e:

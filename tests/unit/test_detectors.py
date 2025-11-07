@@ -4,16 +4,12 @@ Unit tests for person detection with batch support.
 Tests both single-image and batch detection using Ultralytics YOLO.
 """
 
+import numpy as np
 import pytest
 import torch
 from PIL import Image
-import numpy as np
 
-from src.detectors import (
-    DetectionResult,
-    UltralyticsDetector,
-    DetectorFactory
-)
+from src.detectors import DetectionResult, DetectorFactory, UltralyticsDetector
 
 
 @pytest.fixture
@@ -44,10 +40,7 @@ class TestDetectionResult:
     def test_create_detection_result(self):
         """Test creating a DetectionResult."""
         result = DetectionResult(
-            bbox=(100, 100, 200, 300),
-            confidence=0.95,
-            class_name="person",
-            class_id=0
+            bbox=(100, 100, 200, 300), confidence=0.95, class_name="person", class_id=0
         )
 
         assert result.bbox == (100, 100, 200, 300)
@@ -57,10 +50,7 @@ class TestDetectionResult:
 
     def test_detection_result_repr(self):
         """Test DetectionResult string representation."""
-        result = DetectionResult(
-            bbox=(10, 20, 30, 40),
-            confidence=0.85
-        )
+        result = DetectionResult(bbox=(10, 20, 30, 40), confidence=0.85)
         repr_str = repr(result)
         assert "DetectionResult" in repr_str
         assert "0.850" in repr_str
@@ -76,10 +66,7 @@ class TestUltralyticsDetector:
 
     def test_single_image_detection(self, detector, sample_image):
         """Test detection on a single image."""
-        detections = detector.detect(
-            image=sample_image,
-            confidence_threshold=0.5
-        )
+        detections = detector.detect(image=sample_image, confidence_threshold=0.5)
 
         # Detections should be a list
         assert isinstance(detections, list)
@@ -92,8 +79,7 @@ class TestUltralyticsDetector:
     def test_batch_detection(self, detector, sample_images):
         """Test batch detection on multiple images."""
         all_detections = detector.detect_batch(
-            images=sample_images,
-            confidence_threshold=0.5
+            images=sample_images, confidence_threshold=0.5
         )
 
         # Should return list of lists
@@ -109,10 +95,7 @@ class TestUltralyticsDetector:
 
     def test_batch_detection_empty_list(self, detector):
         """Test batch detection with empty list."""
-        all_detections = detector.detect_batch(
-            images=[],
-            confidence_threshold=0.5
-        )
+        all_detections = detector.detect_batch(images=[], confidence_threshold=0.5)
 
         assert isinstance(all_detections, list)
         assert len(all_detections) == 0
@@ -143,8 +126,7 @@ class TestDetectorFactory:
     def test_create_yolo_detector(self):
         """Test creating YOLO detector via factory."""
         detector = DetectorFactory.create_detector(
-            backend="yolo",
-            device=torch.device("cpu")
+            backend="yolo", device=torch.device("cpu")
         )
 
         assert isinstance(detector, UltralyticsDetector)
@@ -161,8 +143,7 @@ class TestDetectorFactory:
         """Test that invalid backend raises ValueError."""
         with pytest.raises(ValueError, match="Unsupported detector backend"):
             DetectorFactory.create_detector(
-                backend="invalid_backend",
-                device=torch.device("cpu")
+                backend="invalid_backend", device=torch.device("cpu")
             )
 
 
@@ -190,8 +171,7 @@ class TestBatchDetectionPerformance:
         # Batch detection
         start = time.time()
         batch_detections = detector.detect_batch(
-            sample_images,
-            confidence_threshold=0.5
+            sample_images, confidence_threshold=0.5
         )
         batch_time = time.time() - start
 

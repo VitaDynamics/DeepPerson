@@ -157,9 +157,11 @@ class TestRepresentImageInputs:
     @pytest.fixture
     def mock_dp(self):
         """Create DeepPerson instance with mocked dependencies."""
-        with patch("src.api.DetectorFactory"), \
-             patch("src.api.BodyEmbeddingGenerator"), \
-             patch("src.api.get_registry"):
+        with (
+            patch("src.api.DetectorFactory"),
+            patch("src.api.BodyEmbeddingGenerator"),
+            patch("src.api.get_registry"),
+        ):
             dp = DeepPerson()
 
             # Mock detector
@@ -205,8 +207,7 @@ class TestRepresentImageInputs:
     def test_represent_batch_numpy_arrays(self, mock_dp):
         """Test represent() with list of NumPy arrays."""
         numpy_images = [
-            np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
-            for _ in range(2)
+            np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8) for _ in range(2)
         ]
 
         result = mock_dp.represent(numpy_images)
@@ -234,22 +235,23 @@ class TestVerifyImageInputs:
     @pytest.fixture
     def mock_dp(self):
         """Create DeepPerson instance with mocked represent method."""
-        with patch("src.api.DetectorFactory"), \
-             patch("src.api.BodyEmbeddingGenerator"), \
-             patch("src.api.get_registry"):
+        with (
+            patch("src.api.DetectorFactory"),
+            patch("src.api.BodyEmbeddingGenerator"),
+            patch("src.api.get_registry"),
+        ):
             dp = DeepPerson()
 
             # Mock represent() to return fake embeddings
             def mock_represent(*args, **kwargs):
                 return {
-                    "subjects": [{
-                        "embedding": np.random.rand(512).astype(np.float32),
-                        "metadata": {
-                            "bbox": [0, 0, 100, 100],
-                            "confidence": 0.95
+                    "subjects": [
+                        {
+                            "embedding": np.random.rand(512).astype(np.float32),
+                            "metadata": {"bbox": [0, 0, 100, 100], "confidence": 0.95},
                         }
-                    }],
-                    "model_info": {"name": "test_model"}
+                    ],
+                    "model_info": {"name": "test_model"},
                 }
 
             dp.represent = Mock(side_effect=mock_represent)
@@ -305,12 +307,17 @@ class TestBatchRepresentImageInputs:
     def mock_dp(self):
         """Create DeepPerson instance with mocked dependencies."""
         # Patch the utility functions where they're defined
-        with patch("src.api.DetectorFactory"), \
-             patch("src.api.BodyEmbeddingGenerator"), \
-             patch("src.api.get_registry"), \
-             patch("src.utils.get_hardware_info", return_value={"device": "cpu"}), \
-             patch("src.utils.get_memory_stats", return_value={"allocated_gb": 0.5, "free_gb": 10.0, "reserved_gb": 1.0}), \
-             patch("src.utils.cleanup_memory"):
+        with (
+            patch("src.api.DetectorFactory"),
+            patch("src.api.BodyEmbeddingGenerator"),
+            patch("src.api.get_registry"),
+            patch("src.utils.get_hardware_info", return_value={"device": "cpu"}),
+            patch(
+                "src.utils.get_memory_stats",
+                return_value={"allocated_gb": 0.5, "free_gb": 10.0, "reserved_gb": 1.0},
+            ),
+            patch("src.utils.cleanup_memory"),
+        ):
             dp = DeepPerson()
 
             # Mock detector
@@ -338,8 +345,7 @@ class TestBatchRepresentImageInputs:
     def test_batch_represent_numpy_arrays(self, mock_dp):
         """Test batch_represent() with list of NumPy arrays."""
         numpy_images = [
-            np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
-            for _ in range(2)
+            np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8) for _ in range(2)
         ]
 
         result = mock_dp.batch_represent(numpy_images)
@@ -367,9 +373,11 @@ class TestSourceIDGeneration:
     @pytest.fixture
     def mock_dp(self):
         """Create DeepPerson instance with mocked dependencies."""
-        with patch("src.api.DetectorFactory"), \
-             patch("src.api.BodyEmbeddingGenerator"), \
-             patch("src.api.get_registry"):
+        with (
+            patch("src.api.DetectorFactory"),
+            patch("src.api.BodyEmbeddingGenerator"),
+            patch("src.api.get_registry"),
+        ):
             dp = DeepPerson()
 
             # Mock detector to return fake detections

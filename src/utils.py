@@ -10,7 +10,7 @@ import logging
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Literal, Optional
+from typing import Literal
 
 import numpy as np
 import torch
@@ -60,8 +60,7 @@ def get_device_name(device: torch.device) -> Literal["cuda", "cpu"]:
 
 
 def normalize_embedding(
-    embedding: np.ndarray,
-    method: Literal["base", "resnet", "circle"] = "resnet"
+    embedding: np.ndarray, method: Literal["base", "resnet", "circle"] = "resnet"
 ) -> np.ndarray:
     """
     Normalize embedding vector according to specified strategy.
@@ -108,9 +107,7 @@ def normalize_embedding(
 
 
 def serialize_embedding(
-    embedding_vector: np.ndarray,
-    output_path: Path,
-    metadata: Optional[dict] = None
+    embedding_vector: np.ndarray, output_path: Path, metadata: dict | None = None
 ) -> None:
     """
     Serialize embedding vector and metadata to disk.
@@ -143,7 +140,7 @@ def serialize_embedding(
         logger.debug(f"Saved metadata to {json_path}")
 
 
-def deserialize_embedding(input_path: Path) -> tuple[np.ndarray, Optional[dict]]:
+def deserialize_embedding(input_path: Path) -> tuple[np.ndarray, dict | None]:
     """
     Load embedding vector and metadata from disk.
 
@@ -170,7 +167,7 @@ def deserialize_embedding(input_path: Path) -> tuple[np.ndarray, Optional[dict]]
     json_path = input_path.with_suffix(".json")
     metadata = None
     if json_path.exists():
-        with open(json_path, "r") as f:
+        with open(json_path) as f:
             metadata = json.load(f)
         logger.debug(f"Loaded metadata from {json_path}")
 
@@ -181,8 +178,8 @@ def serialize_gallery(
     embeddings: np.ndarray,
     subject_ids: list[str],
     output_dir: Path,
-    metadata_list: Optional[list[dict]] = None,
-    gallery_name: str = "gallery"
+    metadata_list: list[dict] | None = None,
+    gallery_name: str = "gallery",
 ) -> Path:
     """
     Serialize a gallery of embeddings with manifest.
@@ -216,7 +213,9 @@ def serialize_gallery(
     # Save embedding matrix
     embeddings_path = output_dir / f"{gallery_name}_embeddings.npy"
     np.save(embeddings_path, embeddings)
-    logger.info(f"Saved gallery embeddings to {embeddings_path}, shape: {embeddings.shape}")
+    logger.info(
+        f"Saved gallery embeddings to {embeddings_path}, shape: {embeddings.shape}"
+    )
 
     # Create manifest
     manifest = {
@@ -224,7 +223,7 @@ def serialize_gallery(
         "n_subjects": len(subject_ids),
         "feature_dim": embeddings.shape[1],
         "subject_ids": subject_ids,
-        "metadata": metadata_list or [{} for _ in subject_ids]
+        "metadata": metadata_list or [{} for _ in subject_ids],
     }
 
     manifest_path = output_dir / f"{gallery_name}_manifest.json"
@@ -236,8 +235,7 @@ def serialize_gallery(
 
 
 def deserialize_gallery(
-    gallery_dir: Path,
-    gallery_name: str = "gallery"
+    gallery_dir: Path, gallery_name: str = "gallery"
 ) -> tuple[np.ndarray, list[str], list[dict]]:
     """
     Load a serialized gallery from disk.
@@ -261,14 +259,16 @@ def deserialize_gallery(
         raise FileNotFoundError(f"Gallery embeddings not found: {embeddings_path}")
 
     embeddings = np.load(embeddings_path)
-    logger.info(f"Loaded gallery embeddings from {embeddings_path}, shape: {embeddings.shape}")
+    logger.info(
+        f"Loaded gallery embeddings from {embeddings_path}, shape: {embeddings.shape}"
+    )
 
     # Load manifest
     manifest_path = gallery_dir / f"{gallery_name}_manifest.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Gallery manifest not found: {manifest_path}")
 
-    with open(manifest_path, "r") as f:
+    with open(manifest_path) as f:
         manifest = json.load(f)
 
     subject_ids = manifest["subject_ids"]
@@ -281,15 +281,14 @@ def deserialize_gallery(
             f"manifest subject_ids count ({len(subject_ids)})"
         )
 
-    logger.info(f"Loaded gallery manifest from {manifest_path}, {len(subject_ids)} subjects")
+    logger.info(
+        f"Loaded gallery manifest from {manifest_path}, {len(subject_ids)} subjects"
+    )
 
     return embeddings, subject_ids, metadata_list
 
 
-def validate_embedding_dimension(
-    embedding: np.ndarray,
-    expected_dim: int
-) -> None:
+def validate_embedding_dimension(embedding: np.ndarray, expected_dim: int) -> None:
     """
     Validate that embedding has expected dimensionality.
 
@@ -308,9 +307,7 @@ def validate_embedding_dimension(
 
 
 def validate_gallery_compatibility(
-    gallery_path: Path,
-    model_profile_id: str,
-    feature_dimension: int
+    gallery_path: Path, model_profile_id: str, feature_dimension: int
 ) -> bool:
     """
     Validate that a gallery is compatible with a model profile.
@@ -330,7 +327,7 @@ def validate_gallery_compatibility(
         return False
 
     try:
-        with open(manifest_path, 'r') as f:
+        with open(manifest_path) as f:
             manifest = json.load(f)
 
         # Check model profile
@@ -379,7 +376,7 @@ class TimingContext:
 
     def __init__(self) -> None:
         """Initialize timing context."""
-        self._timings: Dict[str, float] = {}
+        self._timings: dict[str, float] = {}
         self._start_time: float = time.time()
 
     @contextmanager
@@ -401,7 +398,7 @@ class TimingContext:
             self._timings[stage_name] = elapsed
             logger.debug(f"Stage '{stage_name}' took {elapsed:.4f}s")
 
-    def get_timings(self) -> Dict[str, float]:
+    def get_timings(self) -> dict[str, float]:
         """
         Get all collected timing data.
 
@@ -417,7 +414,7 @@ class TimingContext:
         self._start_time = time.time()
 
 
-def get_hardware_info(device: torch.device) -> Dict[str, any]:
+def get_hardware_info(device: torch.device) -> dict[str, any]:
     """
     Get hardware information for batch processing metadata.
 
@@ -479,7 +476,7 @@ def cleanup_memory(device: torch.device) -> None:
         logger.debug(f"Cleaned up CUDA memory on {device}")
 
 
-def get_memory_stats(device: torch.device) -> Dict[str, float]:
+def get_memory_stats(device: torch.device) -> dict[str, float]:
     """
     Get current memory usage statistics.
 

@@ -15,7 +15,6 @@ from pathlib import Path
 
 from src.api import DeepPerson
 
-
 SAMPLE_IMAGE = Path("black.jpg")
 
 
@@ -94,7 +93,9 @@ def main() -> None:
 
     if representation.get("face_model_info"):
         print(f"\n   Face Model: {representation['face_model_info']['name']}")
-        print(f"   Face Feature Dim: {representation['face_model_info']['feature_dim']}")
+        print(
+            f"   Face Feature Dim: {representation['face_model_info']['feature_dim']}"
+        )
 
     # Show some metadata
     print("\n📋 Sample Metadata:")
@@ -114,27 +115,29 @@ def main() -> None:
     print(f"\n🔍 Verifying image against itself: {SAMPLE_IMAGE.name}")
     verification_result = dp.verify(SAMPLE_IMAGE, SAMPLE_IMAGE)
 
-    print(f"\n✓ Result: {'SAME PERSON' if verification_result['verified'] else 'DIFFERENT PERSONS'}")
+    print(
+        f"\n✓ Result: {'SAME PERSON' if verification_result['verified'] else 'DIFFERENT PERSONS'}"
+    )
     print(f"   Distance: {verification_result['distance']:.4f}")
     print(f"   Threshold: {verification_result['threshold']:.4f}")
     print(f"   Metric: {verification_result['distance_metric']}")
     print(f"   Fusion used: {verification_result['used_fusion']}")
     print(f"   Body Distance: {verification_result['body_distance']:.4f}")
 
-    if verification_result.get('face_distance') is not None:
+    if verification_result.get("face_distance") is not None:
         print(f"   Face Distance: {verification_result['face_distance']:.4f}")
 
-    if verification_result.get('fusion_score') is not None:
+    if verification_result.get("fusion_score") is not None:
         print(f"   Fusion Score: {verification_result['fusion_score']:.4f}")
 
-    print(f"\n   Modalities available:")
-    for modality, available in verification_result['modality_available'].items():
+    print("\n   Modalities available:")
+    for modality, available in verification_result["modality_available"].items():
         status = "✓" if available else "✗"
         print(f"     {modality:8s}: {status}")
 
-    if verification_result.get('warnings'):
+    if verification_result.get("warnings"):
         print("\n⚠️  Warnings:")
-        for warning in verification_result['warnings']:
+        for warning in verification_result["warnings"]:
             print(f"   - {warning}")
 
     # ============================================================================
@@ -156,40 +159,42 @@ def main() -> None:
         batch_size=8,
     )
 
-    print(f"\n✓ Batch processing complete!")
-    print(f"   Images processed: {batch_result['success_count']}/{batch_result['batch_metadata']['total_images']}")
+    print("\n✓ Batch processing complete!")
+    print(
+        f"   Images processed: {batch_result['success_count']}/{batch_result['batch_metadata']['total_images']}"
+    )
     print(f"   Failed: {batch_result['error_count']}")
     print(f"   Processing time: {batch_result['processing_time']:.3f}s")
 
     # Show batch metadata
-    print(f"\n📊 Batch Metadata:")
-    metadata = batch_result['batch_metadata']
+    print("\n📊 Batch Metadata:")
+    metadata = batch_result["batch_metadata"]
     print(f"   Batch ID: {metadata['batch_id']}")
     print(f"   Total images: {metadata['total_images']}")
     print(f"   Processed: {metadata['processed_images']}")
     print(f"   Failed: {metadata['failed_images']}")
 
     # Show timing breakdown
-    print(f"\n⏱️  Timing Breakdown:")
-    stages = metadata['processing_stages']
-    print(f"   Detection: {stages['detection_time']*1000:.1f}ms")
-    print(f"   Body embedding: {stages['body_embedding_time']*1000:.1f}ms")
+    print("\n⏱️  Timing Breakdown:")
+    stages = metadata["processing_stages"]
+    print(f"   Detection: {stages['detection_time'] * 1000:.1f}ms")
+    print(f"   Body embedding: {stages['body_embedding_time'] * 1000:.1f}ms")
 
     # Show hardware info
-    print(f"\n💻 Hardware Info:")
-    hw = metadata['hardware_info']
+    print("\n💻 Hardware Info:")
+    hw = metadata["hardware_info"]
     print(f"   Device: {hw['device_type']}")
-    if hw.get('cuda_device'):
+    if hw.get("cuda_device"):
         print(f"   GPU: {hw['cuda_device']}")
         print(f"   Memory used: {hw.get('final_memory_gb', 0):.2f}GB")
 
     # Show per-image results
-    print(f"\n📋 Per-Image Results:")
-    for i, result in enumerate(batch_result['results'][:3]):  # Show first 3
-        status = "✓" if result['processing_status'] == "success" else "✗"
-        num_subjects = len(result.get('subjects', []))
+    print("\n📋 Per-Image Results:")
+    for i, result in enumerate(batch_result["results"][:3]):  # Show first 3
+        status = "✓" if result["processing_status"] == "success" else "✗"
+        num_subjects = len(result.get("subjects", []))
         print(f"   Image {i}: {status} {num_subjects} person(s) detected")
-    if len(batch_result['results']) > 3:
+    if len(batch_result["results"]) > 3:
         print(f"   ... and {len(batch_result['results']) - 3} more images")
 
     # ============================================================================
@@ -209,9 +214,11 @@ def main() -> None:
             SAMPLE_IMAGE,
             distance_metric=metric,
         )
-        verified_str = "✓" if result['verified'] else "✗"
-        print(f"   {metric:15s} | Distance: {result['distance']:6.4f} | "
-              f"Threshold: {result['threshold']:5.4f} | {verified_str}")
+        verified_str = "✓" if result["verified"] else "✗"
+        print(
+            f"   {metric:15s} | Distance: {result['distance']:6.4f} | "
+            f"Threshold: {result['threshold']:5.4f} | {verified_str}"
+        )
 
     # ============================================================================
     # STEP 5: Custom Parameters
@@ -228,10 +235,12 @@ def main() -> None:
         SAMPLE_IMAGE,
         threshold=0.1,  # Very strict
     )
-    print(f"\n   Strict threshold (0.1):")
+    print("\n   Strict threshold (0.1):")
     print(f"   Distance: {strict_result['distance']:.4f}")
     print(f"   Threshold: {strict_result['threshold']:.4f}")
-    print(f"   Result: {'✓ Verified' if strict_result['verified'] else '✗ Not verified'}")
+    print(
+        f"   Result: {'✓ Verified' if strict_result['verified'] else '✗ Not verified'}"
+    )
 
     # Use a very lenient threshold
     lenient_result = dp.verify(
@@ -239,10 +248,12 @@ def main() -> None:
         SAMPLE_IMAGE,
         threshold=2.0,  # Very lenient
     )
-    print(f"\n   Lenient threshold (2.0):")
+    print("\n   Lenient threshold (2.0):")
     print(f"   Distance: {lenient_result['distance']:.4f}")
     print(f"   Threshold: {lenient_result['threshold']:.4f}")
-    print(f"   Result: {'✓ Verified' if lenient_result['verified'] else '✗ Not verified'}")
+    print(
+        f"   Result: {'✓ Verified' if lenient_result['verified'] else '✗ Not verified'}"
+    )
 
     # ============================================================================
     # Summary

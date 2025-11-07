@@ -9,7 +9,6 @@ Provides detector backends for locating persons in images:
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, List, Optional, Union
 
 import numpy as np
 import torch
@@ -34,7 +33,7 @@ class DetectionResult:
         bbox: tuple[int, int, int, int],
         confidence: float,
         class_name: str = "person",
-        class_id: int = 0
+        class_id: int = 0,
     ):
         self.bbox = bbox
         self.confidence = confidence
@@ -58,9 +57,9 @@ class PersonDetector(ABC):
     @abstractmethod
     def detect(
         self,
-        image: Union[str, Path, Image.Image, np.ndarray],
-        confidence_threshold: float = 0.5
-    ) -> List[DetectionResult]:
+        image: str | Path | Image.Image | np.ndarray,
+        confidence_threshold: float = 0.5,
+    ) -> list[DetectionResult]:
         """
         Detect persons in an image.
 
@@ -76,9 +75,9 @@ class PersonDetector(ABC):
     @abstractmethod
     def crop_persons(
         self,
-        image: Union[str, Path, Image.Image, np.ndarray],
-        detections: List[DetectionResult]
-    ) -> List[Image.Image]:
+        image: str | Path | Image.Image | np.ndarray,
+        detections: list[DetectionResult],
+    ) -> list[Image.Image]:
         """
         Crop detected persons from image.
 
@@ -92,7 +91,7 @@ class PersonDetector(ABC):
         pass
 
     @staticmethod
-    def _load_image(image: Union[str, Path, Image.Image, np.ndarray]) -> Image.Image:
+    def _load_image(image: str | Path | Image.Image | np.ndarray) -> Image.Image:
         """
         Load image from various input formats.
 
@@ -124,11 +123,7 @@ class UltralyticsDetector(PersonDetector):
         https://docs.ultralytics.com/tasks/detect/
     """
 
-    def __init__(
-        self,
-        device: torch.device,
-        model_name: str = "yolov8n.pt"
-    ):
+    def __init__(self, device: torch.device, model_name: str = "yolov8n.pt"):
         """
         Initialize Ultralytics YOLO detector.
 
@@ -149,6 +144,7 @@ class UltralyticsDetector(PersonDetector):
 
         # Ensure model weights are available using model manager
         from .model_manager import get_model_manager
+
         model_manager = get_model_manager()
         weights_path = model_manager.ensure_yolo_weights(model_name)
 
@@ -167,9 +163,9 @@ class UltralyticsDetector(PersonDetector):
 
     def detect(
         self,
-        image: Union[str, Path, Image.Image, np.ndarray],
-        confidence_threshold: float = 0.5
-    ) -> List[DetectionResult]:
+        image: str | Path | Image.Image | np.ndarray,
+        confidence_threshold: float = 0.5,
+    ) -> list[DetectionResult]:
         """
         Detect persons in image using YOLO.
 
@@ -185,10 +181,7 @@ class UltralyticsDetector(PersonDetector):
 
         # Run YOLO inference
         results = self.model.predict(
-            source=img,
-            conf=confidence_threshold,
-            device=self.device_str,
-            verbose=False
+            source=img, conf=confidence_threshold, device=self.device_str, verbose=False
         )
 
         # Extract person detections (class 0 in COCO)
@@ -207,7 +200,7 @@ class UltralyticsDetector(PersonDetector):
                         bbox=(int(x1), int(y1), int(x2), int(y2)),
                         confidence=confidence,
                         class_name="person",
-                        class_id=class_id
+                        class_id=class_id,
                     )
                     detections.append(detection)
 
@@ -216,9 +209,9 @@ class UltralyticsDetector(PersonDetector):
 
     def detect_batch(
         self,
-        images: List[Union[str, Path, Image.Image, np.ndarray]],
-        confidence_threshold: float = 0.5
-    ) -> List[List[DetectionResult]]:
+        images: list[str | Path | Image.Image | np.ndarray],
+        confidence_threshold: float = 0.5,
+    ) -> list[list[DetectionResult]]:
         """
         Detect persons in multiple images using batch inference.
 
@@ -240,7 +233,7 @@ class UltralyticsDetector(PersonDetector):
             source=loaded_images,
             conf=confidence_threshold,
             device=self.device_str,
-            verbose=False
+            verbose=False,
         )
 
         # Extract person detections for each image
@@ -260,7 +253,7 @@ class UltralyticsDetector(PersonDetector):
                         bbox=(int(x1), int(y1), int(x2), int(y2)),
                         confidence=confidence,
                         class_name="person",
-                        class_id=class_id
+                        class_id=class_id,
                     )
                     image_detections.append(detection)
             all_detections.append(image_detections)
@@ -273,9 +266,9 @@ class UltralyticsDetector(PersonDetector):
 
     def crop_persons(
         self,
-        image: Union[str, Path, Image.Image, np.ndarray],
-        detections: List[DetectionResult]
-    ) -> List[Image.Image]:
+        image: str | Path | Image.Image | np.ndarray,
+        detections: list[DetectionResult],
+    ) -> list[Image.Image]:
         """
         Crop detected persons from image.
 
@@ -323,8 +316,10 @@ class TorchVisionDetector(PersonDetector):
 
         try:
             import torchvision
-            from torchvision.models.detection import fasterrcnn_resnet50_fpn
-            from torchvision.models.detection import FasterRCNN_ResNet50_FPN_Weights
+            from torchvision.models.detection import (
+                FasterRCNN_ResNet50_FPN_Weights,
+                fasterrcnn_resnet50_fpn,
+            )
         except ImportError:
             raise ImportError(
                 "torchvision required for TorchVisionDetector. "
@@ -345,9 +340,9 @@ class TorchVisionDetector(PersonDetector):
 
     def detect(
         self,
-        image: Union[str, Path, Image.Image, np.ndarray],
-        confidence_threshold: float = 0.5
-    ) -> List[DetectionResult]:
+        image: str | Path | Image.Image | np.ndarray,
+        confidence_threshold: float = 0.5,
+    ) -> list[DetectionResult]:
         """
         Detect persons using Faster R-CNN.
 
@@ -385,7 +380,7 @@ class TorchVisionDetector(PersonDetector):
                     bbox=(int(x1), int(y1), int(x2), int(y2)),
                     confidence=float(score),
                     class_name="person",
-                    class_id=int(label)
+                    class_id=int(label),
                 )
                 detections.append(detection)
 
@@ -394,9 +389,9 @@ class TorchVisionDetector(PersonDetector):
 
     def crop_persons(
         self,
-        image: Union[str, Path, Image.Image, np.ndarray],
-        detections: List[DetectionResult]
-    ) -> List[Image.Image]:
+        image: str | Path | Image.Image | np.ndarray,
+        detections: list[DetectionResult],
+    ) -> list[Image.Image]:
         """
         Crop detected persons from image.
 
@@ -439,10 +434,7 @@ class DetectorFactory:
 
     @classmethod
     def create_detector(
-        cls,
-        backend: str = "yolo",
-        device: Optional[torch.device] = None,
-        **kwargs
+        cls, backend: str = "yolo", device: torch.device | None = None, **kwargs
     ) -> PersonDetector:
         """
         Create a person detector instance.
@@ -463,8 +455,7 @@ class DetectorFactory:
         if backend_lower not in cls._BACKENDS:
             available = ", ".join(cls._BACKENDS.keys())
             raise ValueError(
-                f"Unsupported detector backend: '{backend}'. "
-                f"Available: {available}"
+                f"Unsupported detector backend: '{backend}'. Available: {available}"
             )
 
         # Auto-detect device if not provided
@@ -477,7 +468,7 @@ class DetectorFactory:
         return detector_class(device=device, **kwargs)
 
     @classmethod
-    def list_available_backends(cls) -> List[str]:
+    def list_available_backends(cls) -> list[str]:
         """
         List available detector backend names.
 
@@ -487,7 +478,7 @@ class DetectorFactory:
         return list(cls._BACKENDS.keys())
 
 
-def get_default_detector(device: Optional[torch.device] = None) -> PersonDetector:
+def get_default_detector(device: torch.device | None = None) -> PersonDetector:
     """
     Get default person detector (YOLO-based).
 
