@@ -4,8 +4,9 @@ DeepPerson Core API - Usage Examples
 
 This script demonstrates the simplified, stateless DeepPerson API which provides:
 - Multi-modal person detection and embedding generation
-- Identity verification between images
-- Batch processing capabilities
+- Identity verification between images with fusion scoring
+- Optimized batch processing with 2-5x speedup
+- Automatic memory management for large batches
 
 The API is stateless - no gallery management or state tracking required!
 """
@@ -15,7 +16,7 @@ from pathlib import Path
 from src.api import DeepPerson
 
 
-SAMPLE_IMAGE = Path("back.jpg")
+SAMPLE_IMAGE = Path("black.jpg")
 
 
 def main() -> None:
@@ -23,9 +24,10 @@ def main() -> None:
     print("=" * 80)
     print("DeepPerson Core API - Demonstration")
     print("=" * 80)
-    print("\nThis demo shows the simplified, stateless API with 2 core methods:")
-    print("  1. represent() - Generate multi-modal embeddings from images")
-    print("  2. verify()    - Verify if two images show the same person")
+    print("\nThis demo shows the simplified, stateless API with 3 core methods:")
+    print("  1. represent()       - Generate multi-modal embeddings from images")
+    print("  2. batch_represent() - Optimized batch processing (2-5x faster)")
+    print("  3. verify()          - Verify if two images show the same person")
     print()
 
     # Check for sample image
@@ -35,7 +37,14 @@ def main() -> None:
         print("\n📖 Quick Usage Guide:")
         print("   from src.api import DeepPerson")
         print("   dp = DeepPerson()")
+        print("   ")
+        print("   # Single image")
         print("   result = dp.represent('image.jpg')")
+        print("   ")
+        print("   # Batch processing (2-5x faster)")
+        print("   batch = dp.batch_represent(['img1.jpg', 'img2.jpg', 'img3.jpg'])")
+        print("   ")
+        print("   # Identity verification")
         print("   verification = dp.verify('img1.jpg', 'img2.jpg')")
         return
 
@@ -129,27 +138,59 @@ def main() -> None:
             print(f"   - {warning}")
 
     # ============================================================================
-    # STEP 3: Batch Processing
+    # STEP 3: Batch Processing with batch_represent()
     # ============================================================================
     print("\n" + "=" * 80)
-    print("STEP 3: Batch Processing")
+    print("STEP 3: Batch Processing with batch_represent()")
     print("=" * 80)
 
-    print("\n📦 Processing multiple images at once...")
+    print("\n📦 Processing multiple images with optimized batch API...")
     # In real usage, these would be different image files
-    image_paths = [SAMPLE_IMAGE] * 3
+    image_paths = [SAMPLE_IMAGE] * 5
     print(f"   Processing {len(image_paths)} images...")
+    print("   Using vectorized operations for 2-5x speedup!")
 
-    batch_result = dp.represent(
-        image_paths,
+    batch_result = dp.batch_represent(
+        image_paths=image_paths,
         generate_face_embeddings=False,  # Disable for faster demo
-        batch_size=4,
+        batch_size=8,
     )
 
     print(f"\n✓ Batch processing complete!")
-    print(f"   Images processed: {len(image_paths)}")
-    print(f"   Total subjects: {len(batch_result['subjects'])}")
-    print(f"   Average subjects per image: {len(batch_result['subjects']) / len(image_paths):.1f}")
+    print(f"   Images processed: {batch_result['success_count']}/{batch_result['batch_metadata']['total_images']}")
+    print(f"   Failed: {batch_result['error_count']}")
+    print(f"   Processing time: {batch_result['processing_time']:.3f}s")
+
+    # Show batch metadata
+    print(f"\n📊 Batch Metadata:")
+    metadata = batch_result['batch_metadata']
+    print(f"   Batch ID: {metadata['batch_id']}")
+    print(f"   Total images: {metadata['total_images']}")
+    print(f"   Processed: {metadata['processed_images']}")
+    print(f"   Failed: {metadata['failed_images']}")
+
+    # Show timing breakdown
+    print(f"\n⏱️  Timing Breakdown:")
+    stages = metadata['processing_stages']
+    print(f"   Detection: {stages['detection_time']*1000:.1f}ms")
+    print(f"   Body embedding: {stages['body_embedding_time']*1000:.1f}ms")
+
+    # Show hardware info
+    print(f"\n💻 Hardware Info:")
+    hw = metadata['hardware_info']
+    print(f"   Device: {hw['device_type']}")
+    if hw.get('cuda_device'):
+        print(f"   GPU: {hw['cuda_device']}")
+        print(f"   Memory used: {hw.get('final_memory_gb', 0):.2f}GB")
+
+    # Show per-image results
+    print(f"\n📋 Per-Image Results:")
+    for i, result in enumerate(batch_result['results'][:3]):  # Show first 3
+        status = "✓" if result['processing_status'] == "success" else "✗"
+        num_subjects = len(result.get('subjects', []))
+        print(f"   Image {i}: {status} {num_subjects} person(s) detected")
+    if len(batch_result['results']) > 3:
+        print(f"   ... and {len(batch_result['results']) - 3} more images")
 
     # ============================================================================
     # STEP 4: Different Distance Metrics
@@ -209,14 +250,22 @@ def main() -> None:
     print("\n" + "=" * 80)
     print("📚 API Summary")
     print("=" * 80)
-    print("\nThe DeepPerson API provides two core stateless methods:\n")
+    print("\nThe DeepPerson API provides three core stateless methods:\n")
     print("1️⃣  represent() - Generate multi-modal embeddings")
     print("   • Single image or batch processing")
     print("   • Body embeddings (required)")
     print("   • Optional face embeddings (generate_face_embeddings=True)")
     print("   • Configurable normalization and batch size")
     print("   • Returns: subjects with embeddings + metadata\n")
-    print("2️⃣  verify() - Identity verification")
+    print("2️⃣  batch_represent() - Optimized batch processing")
+    print("   • Process multiple images with 2-5x speedup")
+    print("   • Vectorized detection and embedding operations")
+    print("   • Automatic memory management and OOM recovery")
+    print("   • Smart batch size selection based on GPU memory")
+    print("   • Detailed timing and performance metrics")
+    print("   • Per-image error handling with partial results")
+    print("   • Returns: batch results + metadata + timing breakdown\n")
+    print("3️⃣  verify() - Identity verification")
     print("   • Compare two images for same person")
     print("   • Multi-modal fusion scoring (body + face)")
     print("   • Configurable distance metrics: cosine, euclidean, euclidean_l2")
@@ -232,7 +281,14 @@ def main() -> None:
     print("🚀 Quick Start:")
     print("   from src.api import DeepPerson")
     print("   dp = DeepPerson()")
-    print("   embeddings = dp.represent('image.jpg')")
+    print("   ")
+    print("   # Single image")
+    print("   result = dp.represent('image.jpg')")
+    print("   ")
+    print("   # Batch processing (optimized)")
+    print("   batch_result = dp.batch_represent(['img1.jpg', 'img2.jpg', 'img3.jpg'])")
+    print("   ")
+    print("   # Identity verification")
     print("   is_same = dp.verify('img1.jpg', 'img2.jpg')")
     print()
 

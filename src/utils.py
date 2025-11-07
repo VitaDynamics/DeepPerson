@@ -7,8 +7,10 @@ for embeddings and gallery management.
 
 import json
 import logging
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Dict, Literal, Optional
 
 import numpy as np
 import torch
@@ -352,3 +354,164 @@ def validate_gallery_compatibility(
     except Exception as e:
         logger.error(f"Error validating gallery compatibility: {e}")
         return False
+
+
+# ==================== Batch Processing Timing Utilities ====================
+
+
+class TimingContext:
+    """
+    Context manager for timing code blocks in batch processing.
+
+    Collects timing data for different processing stages.
+
+    Examples:
+        >>> timer = TimingContext()
+        >>> with timer.stage("detection"):
+        ...     # detection code
+        ...     pass
+        >>> with timer.stage("embedding"):
+        ...     # embedding code
+        ...     pass
+        >>> timer.get_timings()
+        {'detection': 0.123, 'embedding': 0.456, 'total': 0.579}
+    """
+
+    def __init__(self) -> None:
+        """Initialize timing context."""
+        self._timings: Dict[str, float] = {}
+        self._start_time: float = time.time()
+
+    @contextmanager
+    def stage(self, stage_name: str):
+        """
+        Time a specific processing stage.
+
+        Args:
+            stage_name: Name of the stage being timed
+
+        Yields:
+            None
+        """
+        start = time.time()
+        try:
+            yield
+        finally:
+            elapsed = time.time() - start
+            self._timings[stage_name] = elapsed
+            logger.debug(f"Stage '{stage_name}' took {elapsed:.4f}s")
+
+    def get_timings(self) -> Dict[str, float]:
+        """
+        Get all collected timing data.
+
+        Returns:
+            Dictionary mapping stage names to elapsed times in seconds
+        """
+        total = time.time() - self._start_time
+        return {**self._timings, "total": total}
+
+    def reset(self) -> None:
+        """Reset all timing data."""
+        self._timings.clear()
+        self._start_time = time.time()
+
+
+def get_hardware_info(device: torch.device) -> Dict[str, any]:
+    """
+    Get hardware information for batch processing metadata.
+
+    Args:
+        device: torch.device being used
+
+    Returns:
+        Dictionary with hardware information
+
+    Examples:
+        >>> device = torch.device("cuda:0")
+        >>> info = get_hardware_info(device)
+        >>> print(info)
+        {'cuda_available': True, 'cuda_device': 'NVIDIA GeForce RTX 3080', ...}
+    """
+    info = {
+        "cuda_available": torch.cuda.is_available(),
+        "device_type": device.type,
+        "device_index": device.index if device.type == "cuda" else None,
+    }
+
+    if torch.cuda.is_available() and device.type == "cuda":
+        device_idx = device.index or 0
+        info["cuda_device"] = torch.cuda.get_device_name(device_idx)
+        info["cuda_capability"] = ".".join(
+            str(x) for x in torch.cuda.get_device_capability(device_idx)
+        )
+        info["cuda_memory_total_gb"] = (
+            torch.cuda.get_device_properties(device_idx).total_memory / 1024**3
+        )
+
+    return info
+
+
+def cleanup_memory(device: torch.device) -> None:
+    """
+    Clean up memory after batch processing.
+
+    Clears PyTorch cache and runs garbage collection to free memory,
+    especially important for large batches on GPU.
+
+    Args:
+        device: torch.device to clean up
+
+    Examples:
+        >>> device = torch.device("cuda:0")
+        >>> # After processing large batch
+        >>> cleanup_memory(device)
+    """
+    import gc
+
+    # Clear Python garbage
+    gc.collect()
+
+    # Clear CUDA cache if on GPU
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        logger.debug(f"Cleaned up CUDA memory on {device}")
+
+
+def get_memory_stats(device: torch.device) -> Dict[str, float]:
+    """
+    Get current memory usage statistics.
+
+    Args:
+        device: torch.device to query
+
+    Returns:
+        Dictionary with memory stats in GB
+
+    Examples:
+        >>> device = torch.device("cuda:0")
+        >>> stats = get_memory_stats(device)
+        >>> print(f"Used: {stats['allocated_gb']:.2f} GB")
+    """
+    stats = {
+        "allocated_gb": 0.0,
+        "reserved_gb": 0.0,
+        "free_gb": 0.0,
+    }
+
+    if device.type == "cuda" and torch.cuda.is_available():
+        device_idx = device.index or 0
+        allocated = torch.cuda.memory_allocated(device_idx) / 1024**3
+        reserved = torch.cuda.memory_reserved(device_idx) / 1024**3
+        total = torch.cuda.get_device_properties(device_idx).total_memory / 1024**3
+        free = total - allocated
+
+        stats = {
+            "allocated_gb": allocated,
+            "reserved_gb": reserved,
+            "free_gb": free,
+            "total_gb": total,
+        }
+
+    return stats

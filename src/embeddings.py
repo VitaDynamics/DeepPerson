@@ -299,6 +299,15 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
 
                 embeddings.append(embedding)
 
+            # Cleanup memory every 10 batches to prevent accumulation
+            if (batch_idx + 1) % 10 == 0 and self.device.type == "cuda":
+                torch.cuda.empty_cache()
+                logger.debug(f"Cleaned up memory after batch {batch_idx + 1}/{num_batches}")
+
+        # Final cleanup
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
         logger.info(
             f"Generated {len(embeddings)} embeddings in {num_batches} batch(es)"
         )

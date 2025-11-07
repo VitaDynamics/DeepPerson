@@ -397,3 +397,80 @@ class SimilarityResult:
     distance_metric: Literal["cosine", "euclidean", "euclidean_l2"]
     threshold: Optional[float] = None
     query_id: Optional[str] = None
+
+
+# ==================== Batch Processing Entities ====================
+
+
+@dataclass
+class BatchMetadata:
+    """
+    Metadata for batch processing operations.
+
+    Tracks performance metrics, hardware information, and processing statistics.
+
+    Attributes:
+        batch_id: Unique identifier for this batch
+        total_images: Total number of input images
+        processed_images: Number of successfully processed images
+        failed_images: Number of images that failed to process
+        processing_stages: Time breakdown by stage (detection, embedding, etc.)
+        model_versions: Version info for all models used
+        hardware_info: Device information (GPU/CPU)
+    """
+    batch_id: str
+    total_images: int
+    processed_images: int
+    failed_images: int
+    processing_stages: dict[str, float] = field(default_factory=dict)
+    model_versions: dict[str, str] = field(default_factory=dict)
+    hardware_info: dict[str, any] = field(default_factory=dict)
+
+
+@dataclass
+class BatchResult:
+    """
+    Result from batch representation operation.
+
+    Contains results for all processed images with batch-level metadata.
+
+    Attributes:
+        results: List of single-image results (one per input image)
+        batch_metadata: Information about the batch operation
+        processing_time: Total time in seconds for batch processing
+        success_count: Number of successfully processed images
+        error_count: Number of failed images
+    """
+    results: list[dict]  # List of SingleImageResult dicts
+    batch_metadata: BatchMetadata
+    processing_time: float
+    success_count: int
+    error_count: int
+
+    def __post_init__(self):
+        """Validate batch result consistency."""
+        # Validate counts match
+        if self.success_count + self.error_count != len(self.results):
+            raise ValueError(
+                f"success_count ({self.success_count}) + error_count ({self.error_count}) "
+                f"must equal total results ({len(self.results)})"
+            )
+
+        # Validate metadata matches
+        if self.batch_metadata.total_images != len(self.results):
+            raise ValueError(
+                f"batch_metadata.total_images ({self.batch_metadata.total_images}) "
+                f"must equal len(results) ({len(self.results)})"
+            )
+
+        if self.batch_metadata.processed_images != self.success_count:
+            raise ValueError(
+                f"batch_metadata.processed_images ({self.batch_metadata.processed_images}) "
+                f"must equal success_count ({self.success_count})"
+            )
+
+        if self.batch_metadata.failed_images != self.error_count:
+            raise ValueError(
+                f"batch_metadata.failed_images ({self.batch_metadata.failed_images}) "
+                f"must equal error_count ({self.error_count})"
+            )

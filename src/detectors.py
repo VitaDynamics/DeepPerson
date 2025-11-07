@@ -214,6 +214,63 @@ class UltralyticsDetector(PersonDetector):
         logger.debug(f"Detected {len(detections)} person(s) with YOLO")
         return detections
 
+    def detect_batch(
+        self,
+        images: List[Union[str, Path, Image.Image, np.ndarray]],
+        confidence_threshold: float = 0.5
+    ) -> List[List[DetectionResult]]:
+        """
+        Detect persons in multiple images using batch inference.
+
+        Args:
+            images: List of input images
+            confidence_threshold: Minimum confidence threshold
+
+        Returns:
+            List of detection lists (one list per input image)
+
+        Note:
+            Uses Ultralytics YOLO batch inference for better performance.
+        """
+        # Load all images
+        loaded_images = [self._load_image(img) for img in images]
+
+        # Run YOLO batch inference
+        results = self.model.predict(
+            source=loaded_images,
+            conf=confidence_threshold,
+            device=self.device_str,
+            verbose=False
+        )
+
+        # Extract person detections for each image
+        all_detections = []
+        for result in results:
+            image_detections = []
+            boxes = result.boxes
+            for box in boxes:
+                # Check if detection is 'person' class (class_id = 0 in COCO)
+                class_id = int(box.cls[0])
+                if class_id == 0:  # person class
+                    # Get bbox coordinates (x1, y1, x2, y2)
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    confidence = float(box.conf[0])
+
+                    detection = DetectionResult(
+                        bbox=(int(x1), int(y1), int(x2), int(y2)),
+                        confidence=confidence,
+                        class_name="person",
+                        class_id=class_id
+                    )
+                    image_detections.append(detection)
+            all_detections.append(image_detections)
+
+        logger.debug(
+            f"Batch detected {sum(len(dets) for dets in all_detections)} person(s) "
+            f"across {len(images)} images"
+        )
+        return all_detections
+
     def crop_persons(
         self,
         image: Union[str, Path, Image.Image, np.ndarray],
