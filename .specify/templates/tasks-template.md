@@ -19,9 +19,9 @@ description: "Task list template for feature implementation"
 - Include exact file paths in descriptions
 - Annotate tasks with constitution principle tags where applicable:
   - `(Registry)` for model/profile/threshold work
-  - `(Pipeline)` for detection→embedding→search coverage
+  - `(Pipeline)` for detection→embedding→verification coverage
   - `(Hardware)` for CPU/GPU configuration or benchmarking
-  - `(Gallery)` for serialization, manifests, migrations
+  - `(Fusion)` for multi-modal fusion scoring and weighting
   - `(Observability)` for logging, metrics, incident readiness
 
 ## Path Conventions
@@ -62,16 +62,16 @@ description: "Task list template for feature implementation"
 
 ## Phase 2: Foundational (Blocking Prerequisites)
 
-**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented and satisfy constitution gates (Registry, Pipeline, Hardware, Gallery, Observability)
+**Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented and satisfy constitution gates (Registry, Pipeline, Hardware, Fusion, Observability)
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
 Examples of foundational tasks (adjust based on your project):
 
 - [ ] T004 (Registry) Ensure `ModelRegistry`/`ModelManager` profiles and weight hashes are updated
-- [ ] T005 [P] (Pipeline) Establish detector → embedding → search fixtures and smoke tests
+- [ ] T005 [P] (Pipeline) Establish detector → embedding → verification fixtures and smoke tests
 - [ ] T006 [P] (Hardware) Configure CPU-default execution and optional GPU overrides
-- [ ] T007 (Gallery) Prepare gallery directories, manifests, and migration scripts
+- [ ] T007 (Fusion) Configure fusion scorer with default weights and confidence thresholds
 - [ ] T008 (Observability) Configure structured logging, metrics, and alert placeholders
 - [ ] T009 Setup environment configuration management (tag as needed)
 
