@@ -5,15 +5,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Common Development Commands
 
 ### Installation and Setup
+
+**From PyPI:**
 ```bash
-# Install in development mode (from repository root)
+# Install with all features
+pip install deep-person[all]
+
+pip install deep-person              # Core features only
+```
+
+**Development mode (from repository root):**
+```bash
+# Install in development mode with all features
+pip install -e .[all]
+
+
+# Using uv (recommended for development)
 uv pip install -e .[all]
-
-# Install with specific feature sets
-uv pip install -e .[faiss-gpu,yolo,dev]  # GPU + YOLO + dev tools
-uv pip install -e .[faiss-cpu,yolo,dev]  # CPU + YOLO + dev tools
-
-# Sync all dependencies (recommended)
 uv sync --all-extras
 ```
 
@@ -60,75 +68,202 @@ python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
 
 ## Architecture Overview
 
-DeepPerson is a person re-identification component for the Vbot framework, implementing a **5-principle architecture** defined in `.specify/memory/constitution.md`:
+DeepPerson is a stateless person re-identification library focused on **embedding generation pipelines** and **multi-modal fusion algorithms**. The library provides two core capabilities:
 
-### Core Architecture Principles (Constitution v1.0.0)
+1. **Multi-modal embedding generation** (body + face)
+2. **Fusion scoring algorithms** for combining embeddings from different modalities
 
-**I. Registry Pattern** (`src/registry.py`) - Thread-safe model profile management
-- `ModelRegistry` is the single source of truth for model profiles
-- All model loading routes through the registry with `threading.RLock`
-- Model profiles include: identifier, backbone_path, feature_dim, preprocessing, hardware requirements
+### Core Architecture Principles
 
-**II. Pipeline Pattern** - Sequential processing: Detection → Embedding → Search
-- Person Detection (`src/detectors.py`): YOLO-based with configurable thresholds
-- Feature Extraction (`src/embeddings.py`): ResNet-50 Circle DG generating 2048-dim embeddings
-- Similarity Search (`src/search.py`): FAISS/sklearn with multiple distance metrics (cosine, euclidean, euclidean_l2)
-- Each stage independently testable with clean interfaces
+**I. Pipeline Pattern** - Sequential processing with clean interfaces
+- Detection → Embedding → Verification/Fusion
+- Each stage independently testable
+- Interface-based polymorphism (`EmbeddingGenerator`)
 
-**III. Hardware Optimization** - Automatic GPU/CPU detection with graceful fallback
-- CUDA detection and GPU acceleration (~10-50x speedup for embeddings)
-- FAISS GPU acceleration for large galleries (>10K embeddings)
-- Explicit device selection in constructors
-- CPU fully functional as complete fallback
+**II. Multi-modal Design** - Body and face embeddings with fusion
+- Body embeddings: 512-dim vectors from ResNet-50 Circle DG
+- Face embeddings: 128-512-dim vectors from DeepFace models (Facenet, VGG-Face, etc.)
+- Fusion scoring: Confidence-weighted combination of modalities
 
-**IV. Gallery System** (`src/user_gallery/`) - Multi-modal (body+face) with fusion retrieval
-- Standardized storage format: `{gallery}_embeddings.npy`, `{gallery}_ids.npy`, `{gallery}_metadata.pkl`, `{gallery}_config.json`
-- BODY and FACE modalities with separate embedding spaces and fusion weights
-- Clustering for appearance variant grouping (robust matching across poses/lighting)
-- All operations idempotent and thread-safe
+**III. Registry Pattern** - Centralized model profile management
+- `ModelRegistry` is single source of truth for model configurations
+- Thread-safe model loading and caching
+- Automatic model download and weight management
 
-**V. Production Readiness** - Comprehensive observability and quality
-- Structured logging (DEBUG/INFO/WARNING/ERROR) with contextual information
-- Error handling: specific and actionable, no generic exceptions
-- Performance metrics: embedding time, detection confidence, search latency, gallery scores
-- Test coverage: 80% minimum (90% for critical paths)
-- Type hints required for all public interfaces (mypy strict)
-- Thread safety validation for all shared state
+**IV. Hardware Optimization** - Automatic GPU/CPU detection
+- CUDA detection with graceful CPU fallback
+- GPU acceleration for body embeddings (~10-50x speedup)
+- Face embeddings typically CPU-based (DeepFace)
+
+**V. Stateless API** - No gallery management, purely functional
+- `represent()`: Generate embeddings from images
+- `verify()`: Compare two images for identity verification
+- No persistent state or database dependencies
 
 ### Main API (`src/api.py`)
 
 **DeepPerson class** - Primary façade for all functionality
 
 Core methods:
-- `represent(img_path, ...)` - Generate person embeddings with multi-modal support
-- `verify(img1, img2, ...)` - Identity verification with configurable distance metrics
-- `create_gallery(user_id, image_paths, ...)` - Create user galleries with metadata
-- `retrieve_from_gallery(probe_image, gallery_name, ...)` - Multi-modal fusion search
+- `represent(img_path, ...)` - Generate person embeddings with optional face embeddings
+  - Single image or batch processing
+  - Returns: `{"subjects": [...], "model_info": {...}, "face_model_info": {...}}`
+  - Each subject contains: `embedding` (body), `face_embedding` (optional), `metadata`
 
-Gallery management methods:
-- `update_gallery()`, `add_images()`, `delete_gallery()`, `list_galleries()`
-- `represent_gallery()`, `get_gallery()`, `gallery_exists()`, `recluster_gallery()`
+- `verify(img1, img2, ...)` - Identity verification with multi-modal fusion
+  - Automatically generates body + face embeddings for both images
+  - Returns: `{"verified": bool, "distance": float, "body_distance": float, "face_distance": float, "fusion_score": float, ...}`
+  - Uses `FusionScorer` to combine body and face similarities
 
-### Key Design Patterns
+### Key Components
 
-- **Factory Pattern**: `DetectorFactory` (detectors.py)
-- **Registry Pattern**: Centralized model profile management with lazy loading (`registry.py`)
-- **Pipeline Pattern**: Sequential processing with independent testability
-- **Façade Pattern**: `DeepPerson` class orchestrates all functionality
-- **Thread Safety**: All components use `threading.RLock` for concurrent access
+**Embedding Generation Pipeline** (`src/embeddings.py`, `src/face_embeddings.py`)
+
+Both implement the `EmbeddingGenerator` interface:
+```python
+class EmbeddingGenerator(Protocol):
+    @property
+    def feature_dim(self) -> int: ...
+
+    @property
+    def modality(self) -> str: ...
+
+    @property
+    def model_name(self) -> str: ...
+
+    def generate_embedding(...) -> PersonEmbedding: ...
+
+    def generate_embeddings_batch(...) -> List[PersonEmbedding]: ...
+```
+
+- **BodyEmbeddingGenerator**: ResNet-50 based body embeddings
+  - Input: Cropped person images (PIL Images)
+  - Preprocessing: Resize (256x128) → ToTensor → Normalize (ImageNet stats)
+  - Output: 512-dim embedding vectors (float32)
+  - Supports batch processing with configurable batch size
+
+- **FaceEmbeddingGenerator**: DeepFace-based face embeddings
+  - Input: Cropped person images (face detected automatically)
+  - Models: Facenet (128-dim), Facenet512 (512-dim), VGG-Face (4096-dim), etc.
+  - Output: Model-dependent dimensional embeddings
+  - Sequential processing (DeepFace limitation)
+
+**Fusion Scoring** (`src/fusion.py`)
+
+`FusionScorer` class implements confidence-weighted late fusion:
+- **Input**: Body similarity score, face similarity score, confidences
+- **Algorithm**: Weighted combination with dynamic weights based on confidence
+  - Default weights: face=0.5, body=0.5
+  - Dynamic weighting: `face_weight = face_confidence / (body_confidence + face_confidence)`
+  - Minimum face confidence threshold: 0.7 (configurable)
+- **Output**: Fused similarity score (0.0-1.0) + fusion metadata
+- **Batch processing**: `compute_batch_fusion_scores()` for multiple candidates
+
+Key methods:
+```python
+scorer = FusionScorer(default_face_weight=0.5, default_body_weight=0.5)
+
+# Single fusion
+score, metadata = scorer.compute_fusion_score(
+    body_score=0.8,
+    face_score=0.9,
+    body_confidence=0.95,
+    face_confidence=0.85
+)
+
+# Batch fusion
+scores, metadata_list = scorer.compute_batch_fusion_scores(
+    body_scores=np.array([0.8, 0.7, 0.9]),
+    face_scores=np.array([0.9, 0.6, 0.85])
+)
+```
+
+**Distance Metrics** (`src/distance.py`)
+
+`DistanceMetrics` class provides:
+- `cosine_distance(emb1, emb2)`: Range [0, 2], 0 = identical
+- `euclidean_distance(emb1, emb2)`: L2 distance, range [0, ∞)
+- `euclidean_l2_distance(emb1, emb2)`: L2 distance on normalized embeddings, range [0, 2]
+
+Helper function:
+```python
+from src.distance import compute_distance
+
+distance = compute_distance(emb1, emb2, metric="cosine")  # "euclidean", "euclidean_l2"
+```
+
+**Person Detection** (`src/detectors.py`)
+
+- YOLO-based person detection (Ultralytics YOLOv8)
+- Factory pattern: `DetectorFactory.create_detector(backend="yolo", device=device)`
+- Returns: List of detections with bboxes and confidence scores
+- Cropping: `detector.crop_persons(image, detections)` → List of PIL Images
+
+**Data Models** (`src/entities.py`)
+
+Core entities:
+- `PersonEmbedding`: Multi-modal embedding container
+  - `embedding_vector`: Body embedding (required)
+  - `face_embedding`: Face embedding (optional)
+  - `modality`: Enum (BODY, FACE, BODY_FACE)
+  - `subject_confidence`, `face_confidence`: Detection confidences
+  - `bbox`, `face_bbox`: Bounding boxes
+  - Helper: `has_face_embedding`, `is_multi_modal`, `with_face_embedding()`
+
+- `Modality`: Enum for embedding types
+  - `BODY`: Body-only embeddings
+  - `FACE`: Face-only embeddings
+  - `BODY_FACE`: Multi-modal embeddings
+
+**Model Registry** (`src/registry.py`)
+
+- Thread-safe singleton: `get_registry()`
+- Model profile management: `get_profile(model_name)`, `load_model(model_name, device)`
+- Face model caching: `load_face_model(model_name, detector_backend)`
+- Verification thresholds: `get_verification_threshold(model_name, metric)`
+
+Default thresholds (distance <= threshold → verified):
+```python
+DEFAULT_THRESHOLDS = {
+    "resnet50_circle_dg": {
+        "cosine": 0.40,
+        "euclidean": 10.0,
+        "euclidean_l2": 0.85
+    }
+}
+```
 
 ### Data Flow Architecture
 
+**Basic embedding generation**:
 ```
-Input Image → Detection (YOLO) → Cropping → Feature Extraction (ResNet-50 Circle DG) → 2048-dim Embedding → Similarity Search/Verification
+Input Image → YOLO Detection → Cropping → ResNet-50 → 512-dim Body Embedding
 ```
 
-**Multi-modal extension**:
+**Multi-modal embedding generation**:
 ```
-Body: Detection → Cropping → ResNet-50 → 2048-dim Body Embedding
-Face: Detection → Face Cropping → Face Model → 512-dim Face Embedding
-↓
-Fusion Scoring (Weighted combination: default 0.6 face, 0.4 body)
+Input Image → YOLO Detection → Cropping → ResNet-50 → 512-dim Body Embedding
+                                       ↓
+                              DeepFace Detection → Face Model → 128-512-dim Face Embedding
+                                                                        ↓
+                                                            PersonEmbedding(BODY_FACE)
+```
+
+**Identity verification with fusion**:
+```
+Image 1 → Multi-modal Embedding 1 (body + face)
+Image 2 → Multi-modal Embedding 2 (body + face)
+          ↓
+    Body Distance = distance(body1, body2)
+    Face Distance = distance(face1, face2)
+          ↓
+    Convert to similarities: body_sim = 1 - body_dist, face_sim = 1 - face_dist
+          ↓
+    FusionScorer.compute_fusion_score(body_sim, face_sim, confidences)
+          ↓
+    Fused Similarity Score (0.0-1.0)
+          ↓
+    Verified = (fusion_score >= threshold)
 ```
 
 ## Development Guidelines
@@ -148,27 +283,21 @@ src/
 ├── detectors.py              # Person detection (YOLO)
 ├── embeddings.py             # Body embedding pipeline
 ├── face_embeddings.py        # Face embedding pipeline
-├── search.py                 # Similarity search (FAISS/sklearn)
-├── fusion.py                 # Fusion scoring
+├── fusion.py                 # Fusion scoring algorithms
+├── distance.py               # Distance metrics
 ├── registry.py               # Model profile registry
 ├── model_manager.py          # Model download/caching
 ├── entities.py               # Data models (PersonEmbedding, etc.)
-├── utils.py                  # Device selection, serialization
-├── backbones/
-│   └── resnet50_circle_dg.py # Model implementation
-└── user_gallery/             # Gallery system (multi-modal)
-    ├── api.py                # _UserGalleryAPI (internal)
-    ├── models.py             # Gallery data models
-    ├── storage.py            # Storage management
-    ├── services.py           # Registration, updates, embeddings
-    ├── search.py             # Multi-modal search
-    ├── fusion.py             # Fusion retrieval
-    └── clustering.py         # Appearance variants
+├── interfaces.py             # Protocol definitions
+├── utils.py                  # Device selection, normalization
+└── backbones/
+    └── resnet50_circle_dg.py # Model implementation
 
 tests/
 ├── contract/                 # API contract tests
 ├── integration/              # End-to-end tests
 └── unit/                     # Component tests
+    └── test_fusion_scorer.py # Fusion algorithm tests
 ```
 
 ### Testing Strategy
@@ -179,39 +308,41 @@ tests/
 
 **Coverage Targets**:
 - 80% minimum for core components
-- 90% for critical paths (detection → embedding → search pipeline)
-
-**Running Tests**:
-- All tests: `pytest tests/ -v`
-- By type: `pytest -m unit|integration|slow -v`
-- Specific file: `pytest tests/integration/test_verify_api.py -v`
+- 90% for critical paths (fusion scoring, distance metrics)
 
 ### Performance Considerations
 - **GPU Acceleration**: Automatic CUDA detection with CPU fallback
-- **Batch Processing**: Configurable batch sizes for embedding generation
+- **Batch Processing**: Configurable batch sizes for body embedding generation
 - **Memory Management**: Model caching and cleanup utilities
-- **Search Performance**:
-  - Embedding generation: ~100ms per person (GPU, batch_size=1)
-  - Gallery search: Top-10 results in ~50ms (galleries up to 10K embeddings)
-  - FAISS GPU acceleration for large galleries (>10K embeddings)
+- **Embedding Generation Performance**:
+  - Body embeddings: ~100ms per person (GPU, batch_size=1)
+  - Face embeddings: ~200-500ms per person (CPU, DeepFace)
+  - Batch processing: Linear speedup up to GPU memory limits
 
 ## Extension Guide
 
-### Adding New Models
-1. Implement in `src/backbones/your_model.py`
+### Adding New Embedding Models
+
+**For body embeddings**:
+1. Implement backbone in `src/backbones/your_model.py`
 2. Create `ModelProfile` in `src/registry.py`
 3. Update registry loading logic in `_load_model_from_profile()`
 4. Add weights to `ModelManager` for automatic download
 
-### Adding New Detectors
-1. Inherit from `PersonDetector` in `src/detectors.py`
-2. Implement `detect()` and `crop_persons()` methods
-3. Register in `DetectorFactory.create_detector()`
+**For face embeddings**:
+1. DeepFace already supports many models (Facenet, VGG-Face, OpenFace, etc.)
+2. Update `FaceEmbeddingGenerator.MODEL_DIMENSIONS` if needed
+3. No code changes required for existing DeepFace models
 
 ### Adding New Distance Metrics
-1. Add method to `DistanceMetrics` class in `src/search.py`
+1. Add method to `DistanceMetrics` class in `src/distance.py`
 2. Update `compute_distance()` function
-3. Document metric behavior and use cases
+3. Add default threshold to `DEFAULT_THRESHOLDS` in `src/registry.py`
+
+### Adding New Fusion Algorithms
+1. Create new scorer class in `src/fusion.py`
+2. Implement same interface as `FusionScorer`
+3. Update `verify()` method in `src/api.py` to support new scorer
 
 ## Dependencies
 
@@ -225,80 +356,66 @@ tests/
 - `tf-keras>=2.18.0` - Keras integration
 
 ### Optional
-- `faiss-gpu>=1.12.0` - GPU-accelerated similarity search
-- `faiss-cpu>=1.12.0` - CPU-based similarity search
+- `deepface` - Face recognition (required for face embeddings)
 - `pytest>=7.0.0`, `pytest-cov>=4.0.0` - Testing
 - `ruff>=0.8.0` - Linting and formatting
 - `mypy>=1.0.0` - Type checking
 
-## Gallery Storage Format
-
-```
-gallery_dir/
-├── {gallery_name}_embeddings.npy    # Embedding matrix
-├── {gallery_name}_ids.npy          # Subject ID array
-├── {gallery_name}_metadata.pkl     # Metadata dictionary
-└── {gallery_name}_config.json      # Search configuration
-```
-
-**Multi-modal galleries**:
-- Separate embedding spaces for BODY and FACE modalities
-- Fusion weights configurable (default: face=0.6, body=0.4)
-- Clustering groups appearance variants for robust matching
-
 ## Quick Start Example
 
 ```python
-from src.api import DeepPerson
+from deep_person import DeepPerson
 
 # Initialize (downloads models on first use)
 dp = DeepPerson()
 
-# Generate embeddings
+# Generate embeddings (body only)
 result = dp.represent("person.jpg")
 for subject in result["subjects"]:
-    print(f"Embedding: {subject['embedding'].shape}")
+    print(f"Body embedding: {subject['embedding'].shape}")
 
-# Verify identity
+# Generate multi-modal embeddings (body + face)
+result = dp.represent("person.jpg", generate_face_embeddings=True)
+for subject in result["subjects"]:
+    body_emb = subject["embedding"]
+    face_emb = subject.get("face_embedding")
+    print(f"Body: {body_emb.shape}, Face: {face_emb.shape if face_emb is not None else 'None'}")
+
+# Verify identity (with automatic fusion scoring)
 result = dp.verify("person1.jpg", "person2.jpg")
-print(f"Same person: {result['verified']} (distance: {result['distance']:.4f})")
+print(f"Same person: {result['verified']}")
+print(f"Body distance: {result['body_distance']:.4f}")
+print(f"Face distance: {result['face_distance']:.4f}")
+print(f"Fusion score: {result['fusion_score']:.4f}")
+print(f"Fusion used: {result['used_fusion']}")
 
-# Create gallery
-dp.create_gallery(
-    user_id="user_001",
-    image_paths=["img1.jpg", "img2.jpg"],
-    modality_hints={"img1.jpg": "BODY", "img2.jpg": "FACE"}
+# Batch processing
+images = ["img1.jpg", "img2.jpg", "img3.jpg"]
+result = dp.represent(images, generate_face_embeddings=True, batch_size=8)
+print(f"Total subjects detected: {len(result['subjects'])}")
+
+# Custom fusion weights
+from src.fusion import FusionScorer
+
+scorer = FusionScorer(default_face_weight=0.6, default_body_weight=0.4)
+fusion_score, metadata = scorer.compute_fusion_score(
+    body_score=0.8,
+    face_score=0.9,
+    body_confidence=0.95,
+    face_confidence=0.85
 )
-
-# Generate gallery embeddings
-dp.represent_gallery(user_id="user_001", generate_face_embeddings=True)
-
-# Multi-modal search
-result = dp.retrieve_from_gallery(
-    probe_image_path="unknown.jpg",
-    gallery_name="user_gallery",
-    top_k=10,
-    fusion_weights={"face": 0.6, "body": 0.4}
-)
+print(f"Custom fusion score: {fusion_score:.3f}")
+print(f"Applied weights: face={metadata['face_weight']:.2f}, body={metadata['body_weight']:.2f}")
 ```
-
-## Recent Architecture Changes
-
-**Gallery System Consolidation** (Latest):
-- Unified to single User Gallery system
-- Removed old `build_gallery()` and `find()` methods
-- All gallery operations through User Gallery API
-- `_UserGalleryAPI` internal - use `DeepPerson` class
-- Simplified defaults: `gallery_storage_path` defaults to `"galleries/"`
-- New methods: `update_gallery()`, `add_images()`, `gallery_exists()`, `recluster_gallery()`
 
 ## Key Files for Understanding
 
-- **`.specify/memory/constitution.md`** - 5 core principles (Registry, Pipeline, Hardware, Gallery, Observability)
-- **`src/api.py`** - Main API, all public methods
-- **`main.py`** - Complete usage examples
-- **`src/registry.py`** - Model profile management
-- **`src/detectors.py`** - Person detection implementations
-- **`src/embeddings.py`** - Body embedding pipeline
-- **`src/search.py`** - Similarity search (FAISS/sklearn)
-- **`src/user_gallery/`** - Multi-modal gallery system
+- **`src/api.py`** - Main API, `DeepPerson` class with `represent()` and `verify()` methods
+- **`src/fusion.py`** - Fusion scoring algorithms (`FusionScorer`)
+- **`src/distance.py`** - Distance metrics (cosine, euclidean, euclidean_l2)
+- **`src/embeddings.py`** - Body embedding pipeline (`BodyEmbeddingGenerator`)
+- **`src/face_embeddings.py`** - Face embedding pipeline (`FaceEmbeddingGenerator`)
+- **`src/entities.py`** - Data models (`PersonEmbedding`, `Modality`)
+- **`src/interfaces.py`** - Protocol definitions (`EmbeddingGenerator`)
+- **`src/registry.py`** - Model profile management and verification thresholds
+- **`main.py`** - Complete usage examples and demo
