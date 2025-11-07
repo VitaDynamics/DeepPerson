@@ -5,9 +5,8 @@ This module tests the fusion scoring functionality that combines body and face
 embeddings for multi-modal person verification and retrieval.
 """
 
-import pytest
 import numpy as np
-from typing import Dict, Any
+import pytest
 
 from src.fusion import FusionScorer
 
@@ -18,18 +17,14 @@ class TestFusionScorer:
     def setup_method(self):
         """Set up test fixtures."""
         self.scorer = FusionScorer(
-            default_face_weight=0.5,
-            default_body_weight=0.5,
-            min_face_confidence=0.7
+            default_face_weight=0.5, default_body_weight=0.5, min_face_confidence=0.7
         )
 
     @pytest.mark.unit
     def test_fusion_scorer_initialization_valid(self):
         """Test FusionScorer initialization with valid parameters."""
         scorer = FusionScorer(
-            default_face_weight=0.6,
-            default_body_weight=0.4,
-            min_face_confidence=0.8
+            default_face_weight=0.6, default_body_weight=0.4, min_face_confidence=0.8
         )
 
         assert scorer.default_face_weight == 0.6
@@ -66,7 +61,7 @@ class TestFusionScorer:
             body_score=body_score,
             face_score=face_score,
             body_confidence=body_confidence,
-            face_confidence=face_confidence
+            face_confidence=face_confidence,
         )
 
         # Check that fusion score is between body and face scores
@@ -89,8 +84,7 @@ class TestFusionScorer:
         face_score = None  # Face not available
 
         fused_score, metadata = self.scorer.compute_fusion_score(
-            body_score=body_score,
-            face_score=face_score
+            body_score=body_score, face_score=face_score
         )
 
         # Should return body score only
@@ -115,7 +109,7 @@ class TestFusionScorer:
             body_score=body_score,
             face_score=face_score,
             body_confidence=body_confidence,
-            face_confidence=face_confidence
+            face_confidence=face_confidence,
         )
 
         # Should fallback to body-only due to low face confidence
@@ -136,7 +130,7 @@ class TestFusionScorer:
             body_score=body_score,
             face_score=face_score,
             face_confidence=face_confidence,
-            custom_weights=custom_weights
+            custom_weights=custom_weights,
         )
 
         # Check that custom weights are used
@@ -177,7 +171,7 @@ class TestFusionScorer:
             body_scores=body_scores,
             face_scores=face_scores,
             body_confidences=body_confidences,
-            face_confidences=face_confidences
+            face_confidences=face_confidences,
         )
 
         # Check output shapes
@@ -199,8 +193,7 @@ class TestFusionScorer:
         face_scores = None  # No face scores available
 
         fused_scores, metadata_list = self.scorer.compute_batch_fusion_scores(
-            body_scores=body_scores,
-            face_scores=face_scores
+            body_scores=body_scores, face_scores=face_scores
         )
 
         # All should fallback to body-only
@@ -218,8 +211,7 @@ class TestFusionScorer:
         # No confidences provided - should default to 1.0
 
         fused_scores, metadata_list = self.scorer.compute_batch_fusion_scores(
-            body_scores=body_scores,
-            face_scores=face_scores
+            body_scores=body_scores, face_scores=face_scores
         )
 
         # Should work with default confidences
@@ -240,7 +232,7 @@ class TestFusionScorer:
             body_score=body_score,
             face_score=face_score,
             body_confidence=body_confidence,
-            face_confidence=face_confidence
+            face_confidence=face_confidence,
         )
 
         # Face should get higher weight due to higher confidence
@@ -265,7 +257,7 @@ class TestFusionScorer:
             body_score=body_score,
             face_score=face_score,
             body_confidence=body_confidence,
-            face_confidence=face_confidence
+            face_confidence=face_confidence,
         )
 
         # Face confidence is below threshold, so should fallback to body-only

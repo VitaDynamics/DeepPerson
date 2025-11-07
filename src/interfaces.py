@@ -7,9 +7,8 @@ makes the codebase more extensible and testable.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Literal, Optional
+from typing import Literal
 
-import numpy as np
 from PIL import Image
 
 from .entities import PersonEmbedding
@@ -53,8 +52,8 @@ class EmbeddingGenerator(ABC):
         bbox: tuple[int, int, int, int],
         confidence: float,
         normalize_method: Literal["base", "resnet", "circle"] = "resnet",
-        source_image_id: Optional[str] = None,
-        **kwargs
+        source_image_id: str | None = None,
+        **kwargs,
     ) -> PersonEmbedding:
         """
         Generate embedding for a single person image.
@@ -78,15 +77,15 @@ class EmbeddingGenerator(ABC):
     @abstractmethod
     def generate_embeddings_batch(
         self,
-        images: List[Image.Image],
-        bboxes: List[tuple[int, int, int, int]],
-        confidences: List[float],
+        images: list[Image.Image],
+        bboxes: list[tuple[int, int, int, int]],
+        confidences: list[float],
         normalize_method: Literal["base", "resnet", "circle"] = "resnet",
-        source_image_ids: Optional[List[str]] = None,
+        source_image_ids: list[str] | None = None,
         batch_size: int = 16,
         show_progress: bool = False,
-        **kwargs
-    ) -> List[PersonEmbedding]:
+        **kwargs,
+    ) -> list[PersonEmbedding]:
         """
         Generate embeddings for multiple images with batching.
 

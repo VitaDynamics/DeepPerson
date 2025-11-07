@@ -7,20 +7,26 @@ Main public interface for the DeepPerson library, providing methods for:
 """
 
 import logging
+import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal, Union
 
+import numpy as np
 import torch
+from PIL import Image
 
 from .detectors import DetectorFactory, PersonDetector
+from .distance import compute_distance
 from .embeddings import BodyEmbeddingGenerator
 from .entities import PersonEmbedding
-from .registry import get_registry
-from .distance import compute_distance
 from .fusion import FusionScorer
+from .registry import get_registry
 from .utils import select_device
 
 logger = logging.getLogger(__name__)
+
+# Type alias for all supported image input types
+ImageInput = Union[str, Path, Image.Image, np.ndarray]
 
 
 class DeepPerson:
@@ -50,7 +56,7 @@ class DeepPerson:
     def __init__(
         self,
         model_name: str = "resnet50_circle_dg",
-        device: Optional[Union[str, torch.device]] = None,
+        device: str | torch.device | None = None,
         detector_backend: str = "yolo",
     ):
         """
@@ -93,10 +99,82 @@ class DeepPerson:
 
         logger.info("DeepPerson initialized successfully")
 
+    @staticmethod
+    def _normalize_image(img_input: ImageInput) -> tuple[Image.Image, str]:
+        """
+        Convert various image formats to PIL Image and generate source ID.
+
+        Args:
+            img_input: Image in any supported format (str, Path, PIL.Image, np.ndarray)
+
+        Returns:
+            Tuple of (PIL Image in RGB mode, source_id string)
+
+        Raises:
+            FileNotFoundError: If path provided but file doesn't exist
+            TypeError: If unsupported image type provided
+        """
+        if isinstance(img_input, (str, Path)):
+            path = Path(img_input)
+            if not path.exists():
+                raise FileNotFoundError(f"Image not found: {path}")
+            return Image.open(path).convert("RGB"), str(path)
+        elif isinstance(img_input, Image.Image):
+            source_id = f"in_memory_{uuid.uuid4().hex[:8]}"
+            return img_input.convert("RGB"), source_id
+        elif isinstance(img_input, np.ndarray):
+            source_id = f"in_memory_{uuid.uuid4().hex[:8]}"
+            return Image.fromarray(img_input).convert("RGB"), source_id
+        else:
+            raise TypeError(
+                f"Unsupported image type: {type(img_input)}. "
+                f"Supported types: str, Path, PIL.Image.Image, np.ndarray"
+            )
+
+    @staticmethod
+    def _validate_batch_type_consistency(images: list[ImageInput]) -> None:
+        """
+        Ensure all images in batch are the same type.
+
+        Mixed types within a single batch are not supported for consistency
+        and predictable behavior.
+
+        Args:
+            images: List of images in various formats
+
+        Raises:
+            TypeError: If mixed types detected in batch
+        """
+        if not images:
+            return
+
+        # Determine first type (treat str and Path as compatible)
+        first_type = type(images[0])
+        is_first_path = isinstance(images[0], (str, Path))
+
+        # Check consistency
+        for i, img in enumerate(images[1:], start=1):
+            if is_first_path:
+                if not isinstance(img, (str, Path)):
+                    raise TypeError(
+                        f"Mixed batch types not supported. "
+                        f"Image 0 is {type(images[0]).__name__}, "
+                        f"but image {i} is {type(img).__name__}. "
+                        f"All items in batch must be the same type "
+                        f"(str/Path are considered compatible)."
+                    )
+            elif not isinstance(img, first_type):
+                raise TypeError(
+                    f"Mixed batch types not supported. "
+                    f"Image 0 is {first_type.__name__}, "
+                    f"but image {i} is {type(img).__name__}. "
+                    f"All items in batch must be the same type."
+                )
+
     def represent(
         self,
-        img_path: Union[str, Path, List[Union[str, Path]]],
-        detector_backend: Optional[str] = None,
+        img_path: ImageInput | list[ImageInput],
+        detector_backend: str | None = None,
         normalization: Literal["base", "resnet", "circle"] = "resnet",
         batch_size: int = 16,
         confidence_threshold: float = 0.5,
@@ -104,7 +182,7 @@ class DeepPerson:
         face_model_name: str = "Facenet",
         face_detector_backend: str = "opencv",
         return_multi_modal: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate person embeddings from image(s) with optional multi-modal support.
 
@@ -112,7 +190,7 @@ class DeepPerson:
         Optionally generates face embeddings for multi-modal fusion capabilities.
 
         Args:
-            img_path: Path to image file or list of paths
+            img_path: Image or list of images (str path, Path, PIL.Image, or np.ndarray)
             detector_backend: Override detector backend (None to use default)
             normalization: Normalization method for embeddings ('base', 'resnet', 'circle')
             batch_size: Batch size for embedding generation
@@ -130,13 +208,23 @@ class DeepPerson:
                 - face_model_info: Face model information (if generate_face_embeddings=True)
 
         Examples:
-            >>> # Basic body-only embeddings
+            >>> # From file path
             >>> result = dp.represent("person.jpg")
             >>> print(f"Detected {len(result['subjects'])} person(s)")
             >>>
-            >>> # Multi-modal body+face embeddings
+            >>> # From PIL Image
+            >>> from PIL import Image
+            >>> pil_img = Image.open("person.jpg")
+            >>> result = dp.represent(pil_img)
+            >>>
+            >>> # From NumPy array
+            >>> import numpy as np
+            >>> numpy_img = np.array(Image.open("person.jpg"))
+            >>> result = dp.represent(numpy_img)
+            >>>
+            >>> # Multi-modal body+face embeddings (any input type)
             >>> result = dp.represent(
-            ...     "person.jpg",
+            ...     pil_img,
             ...     generate_face_embeddings=True,
             ...     face_model_name="Facenet"
             ... )
@@ -145,19 +233,36 @@ class DeepPerson:
             ...     face_emb = subject.get("face_embedding")  # Face embedding (if detected)
             ...     print(f"Body: {body_emb.shape}, Face: {face_emb.shape if face_emb is not None else 'None'}")
             >>>
-            >>> # Batch processing with multi-modal
-            >>> result = dp.represent(
-            ...     ["img1.jpg", "img2.jpg"],
-            ...     generate_face_embeddings=True
-            ... )
+            >>> # Batch processing (all same type)
+            >>> result = dp.represent([pil_img1, pil_img2, pil_img3])
+            >>>
+            >>> # Batch with paths
+            >>> result = dp.represent(["img1.jpg", "img2.jpg"], generate_face_embeddings=True)
         """
-        # Normalize input to list
-        if isinstance(img_path, (str, Path)):
-            img_paths = [Path(img_path)]
+        # Normalize input to list and validate consistency
+        if isinstance(img_path, (str, Path, Image.Image, np.ndarray)):
+            input_list = [img_path]
             single_image = True
         else:
-            img_paths = [Path(p) for p in img_path]
+            # Handle list/iterable inputs
+            try:
+                input_list = list(img_path)
+            except TypeError:
+                raise TypeError(
+                    f"Unsupported image type: {type(img_path)}. "
+                    f"Expected str, Path, PIL.Image, np.ndarray, or list of these types."
+                )
             single_image = False
+            # Validate batch type consistency
+            self._validate_batch_type_consistency(input_list)
+
+        # Normalize all images to PIL and get source IDs
+        normalized_images = []
+        source_ids = []
+        for img_input in input_list:
+            pil_img, source_id = self._normalize_image(img_input)
+            normalized_images.append(pil_img)
+            source_ids.append(source_id)
 
         # Use override detector if specified
         if detector_backend is not None:
@@ -180,7 +285,7 @@ class DeepPerson:
                     enforce_detection=False,
                 )
                 logger.info(f"Face embedding generator ready: {face_model_name}")
-            except ImportError as e:
+            except ImportError:
                 warning_msg = (
                     "DeepFace not available, face embeddings will be skipped. "
                     "Install with: pip install deepface"
@@ -192,129 +297,272 @@ class DeepPerson:
         # Results containers
         all_subjects = []
 
-        # Process each image
-        for image_path in img_paths:
-            # Validate image exists
-            if not image_path.exists():
-                warning_msg = f"Image not found: {image_path}"
-                logger.warning(warning_msg)
-                warnings_list.append(warning_msg)
-                continue
+        # Determine processing strategy based on input size
+        use_batch_processing = len(normalized_images) > 1
 
-            # Detect persons in image
-            logger.debug(f"Processing image: {image_path}")
-            detections = detector.detect(
-                image=image_path, confidence_threshold=confidence_threshold
-            )
+        if use_batch_processing:
+            logger.info(f"Using batch processing for {len(normalized_images)} images")
 
-            # Handle no detections
-            if len(detections) == 0:
-                warning_msg = f"No person detected in {image_path.name}"
-                logger.warning(warning_msg)
-                warnings_list.append(warning_msg)
-                continue
+            # Phase 1: Batch detection for all images
+            all_detections = []
 
-            logger.debug(f"Detected {len(detections)} person(s) in {image_path.name}")
-
-            # Crop detected persons
-            cropped_persons = detector.crop_persons(
-                image=image_path, detections=detections
-            )
-
-            # Prepare for batch embedding generation
-            bboxes = [det.bbox for det in detections]
-            confidences = [det.confidence for det in detections]
-            source_ids = [str(image_path)] * len(detections)
-
-            # Generate body embeddings (batch processing within image)
-            body_embeddings: List[PersonEmbedding] = (
-                self.embedding_pipeline.generate_embeddings_batch(
-                    images=cropped_persons,
-                    bboxes=bboxes,
-                    confidences=confidences,
-                    normalize_method=normalization,
-                    source_image_ids=source_ids,
-                    batch_size=batch_size,
-                    show_progress=False,
+            # Use detect_batch if available, otherwise fall back to sequential
+            if hasattr(detector, 'detect_batch') and detector_backend is None:
+                # Use optimized batch detection
+                all_detections = detector.detect_batch(
+                    images=normalized_images, confidence_threshold=confidence_threshold
                 )
-            )
+                logger.debug(f"Batch detected across {len(normalized_images)} images")
+            else:
+                # Fall back to sequential detection
+                logger.debug("Using sequential detection (batch detection not available or detector override)")
+                for pil_image in normalized_images:
+                    detections = detector.detect(
+                        image=pil_image, confidence_threshold=confidence_threshold
+                    )
+                    all_detections.append(detections)
 
-            # Generate face embeddings if requested
-            face_embeddings = []
-            if generate_face_embeddings and face_generator:
-                try:
-                    face_embeddings = face_generator.generate_embeddings_batch(
+            # Phase 2: Process each image's detections
+            for pil_image, source_id, detections in zip(normalized_images, source_ids, all_detections):
+                # Handle no detections
+                if len(detections) == 0:
+                    # Extract display name from source_id
+                    display_name = (
+                        Path(source_id).name
+                        if not source_id.startswith("in_memory_")
+                        else source_id
+                    )
+                    warning_msg = f"No person detected in {display_name}"
+                    logger.warning(warning_msg)
+                    warnings_list.append(warning_msg)
+                    continue
+
+                logger.debug(f"Detected {len(detections)} person(s) in {source_id}")
+
+                # Crop detected persons
+                cropped_persons = detector.crop_persons(
+                    image=pil_image, detections=detections
+                )
+
+                # Prepare for batch embedding generation
+                bboxes = [det.bbox for det in detections]
+                confidences = [det.confidence for det in detections]
+                source_ids_for_batch = [source_id] * len(detections)
+
+                # Generate body embeddings
+                body_embeddings: list[PersonEmbedding] = (
+                    self.embedding_pipeline.generate_embeddings_batch(
                         images=cropped_persons,
                         bboxes=bboxes,
                         confidences=confidences,
-                        normalize_method="base",  # DeepFace handles normalization
-                        source_image_ids=source_ids,
+                        normalize_method=normalization,
+                        source_image_ids=source_ids_for_batch,
                         batch_size=batch_size,
                         show_progress=False,
                     )
-                    logger.debug(f"Generated {len(face_embeddings)} face embeddings")
-                except Exception as e:
-                    logger.warning(f"Face embedding generation failed: {e}")
-                    face_embeddings = [None] * len(body_embeddings)
-            else:
-                face_embeddings = [None] * len(body_embeddings)
+                )
 
-            # Combine body and face embeddings
-            combined_embeddings = []
-            for body_emb, face_emb in zip(body_embeddings, face_embeddings):
-                if face_emb and face_emb.face_embedding is not None:
-                    # Create multi-modal embedding
-                    from .entities import Modality
-                    combined_emb = PersonEmbedding(
-                        embedding_vector=body_emb.embedding_vector,
-                        subject_confidence=body_emb.subject_confidence,
-                        bbox=body_emb.bbox,
-                        normalization=body_emb.normalization,
-                        model_profile_id=body_emb.model_profile_id,
-                        hardware=body_emb.hardware,
-                        timestamp=body_emb.timestamp,
-                        source_image_id=body_emb.source_image_id,
-                        modality=Modality.BODY_FACE,
-                        face_embedding=face_emb.face_embedding,
-                        face_confidence=face_emb.face_confidence,
-                        face_bbox=face_emb.face_bbox,
-                        embedding_provider=body_emb.embedding_provider,
-                        metadata=body_emb.metadata,
-                    )
-                    combined_embeddings.append(combined_emb)
+                # Generate face embeddings if requested
+                face_embeddings = []
+                if generate_face_embeddings and face_generator:
+                    try:
+                        face_embeddings = face_generator.generate_embeddings_batch(
+                            images=cropped_persons,
+                            bboxes=bboxes,
+                            confidences=confidences,
+                            normalize_method="base",  # DeepFace handles normalization
+                            source_image_ids=source_ids_for_batch,
+                            batch_size=batch_size,
+                            show_progress=False,
+                        )
+                        logger.debug(f"Generated {len(face_embeddings)} face embeddings")
+                    except Exception as e:
+                        logger.warning(f"Face embedding generation failed: {e}")
+                        face_embeddings = [None] * len(body_embeddings)
                 else:
-                    # Body-only embedding
-                    combined_embeddings.append(body_emb)
+                    face_embeddings = [None] * len(body_embeddings)
 
-            # Package subjects
-            for embedding in combined_embeddings:
-                subject = {
-                    "embedding": embedding.embedding_vector,
-                    "metadata": {
-                        "bbox": embedding.bbox,
-                        "confidence": embedding.subject_confidence,
-                        "hardware": embedding.hardware,
-                        "model_profile_id": embedding.model_profile_id,
-                        "normalization": embedding.normalization,
-                        "timestamp": embedding.timestamp.isoformat()
-                        if embedding.timestamp
-                        else None,
-                        "source_image": embedding.source_image_id,
-                        "modality": embedding.modality.value,
-                    },
-                }
+                # Combine body and face embeddings
+                combined_embeddings = []
+                for body_emb, face_emb in zip(body_embeddings, face_embeddings):
+                    if face_emb and face_emb.face_embedding is not None:
+                        # Create multi-modal embedding
+                        from .entities import Modality
 
-                # Add face embedding data if available
-                if embedding.has_face_embedding:
-                    subject["face_embedding"] = embedding.face_embedding
-                    subject["metadata"]["face_confidence"] = embedding.face_confidence
-                    subject["metadata"]["face_bbox"] = embedding.face_bbox
+                        combined_emb = PersonEmbedding(
+                            embedding_vector=body_emb.embedding_vector,
+                            subject_confidence=body_emb.subject_confidence,
+                            bbox=body_emb.bbox,
+                            normalization=body_emb.normalization,
+                            model_profile_id=body_emb.model_profile_id,
+                            hardware=body_emb.hardware,
+                            timestamp=body_emb.timestamp,
+                            source_image_id=body_emb.source_image_id,
+                            modality=Modality.BODY_FACE,
+                            face_embedding=face_emb.face_embedding,
+                            face_confidence=face_emb.face_confidence,
+                            face_bbox=face_emb.face_bbox,
+                            embedding_provider=body_emb.embedding_provider,
+                            metadata=body_emb.metadata,
+                        )
+                        combined_embeddings.append(combined_emb)
+                    else:
+                        # Body-only embedding
+                        combined_embeddings.append(body_emb)
 
-                # Optionally return full PersonEmbedding object
-                if return_multi_modal:
-                    subject["person_embedding"] = embedding
+                # Package subjects
+                for embedding in combined_embeddings:
+                    subject = {
+                        "embedding": embedding.embedding_vector,
+                        "metadata": {
+                            "bbox": embedding.bbox,
+                            "confidence": embedding.subject_confidence,
+                            "hardware": embedding.hardware,
+                            "model_profile_id": embedding.model_profile_id,
+                            "normalization": embedding.normalization,
+                            "timestamp": embedding.timestamp.isoformat()
+                            if embedding.timestamp
+                            else None,
+                            "source_image": embedding.source_image_id,
+                            "modality": embedding.modality.value,
+                        },
+                    }
 
-                all_subjects.append(subject)
+                    # Add face embedding data if available
+                    if embedding.has_face_embedding:
+                        subject["face_embedding"] = embedding.face_embedding
+                        subject["metadata"]["face_confidence"] = embedding.face_confidence
+                        subject["metadata"]["face_bbox"] = embedding.face_bbox
+
+                    # Optionally return full PersonEmbedding object
+                    if return_multi_modal:
+                        subject["person_embedding"] = embedding
+
+                    all_subjects.append(subject)
+        else:
+            # Single image - use sequential processing
+            for pil_image, source_id in zip(normalized_images, source_ids):
+                # Detect persons in image
+                logger.debug(f"Processing image: {source_id}")
+                detections = detector.detect(
+                    image=pil_image, confidence_threshold=confidence_threshold
+                )
+
+                # Handle no detections
+                if len(detections) == 0:
+                    # Extract display name from source_id
+                    display_name = (
+                        Path(source_id).name
+                        if not source_id.startswith("in_memory_")
+                        else source_id
+                    )
+                    warning_msg = f"No person detected in {display_name}"
+                    logger.warning(warning_msg)
+                    warnings_list.append(warning_msg)
+                    continue
+
+                logger.debug(f"Detected {len(detections)} person(s) in {source_id}")
+
+                # Crop detected persons
+                cropped_persons = detector.crop_persons(
+                    image=pil_image, detections=detections
+                )
+
+                # Prepare for batch embedding generation
+                bboxes = [det.bbox for det in detections]
+                confidences = [det.confidence for det in detections]
+                source_ids_for_batch = [source_id] * len(detections)
+
+                # Generate body embeddings
+                body_embeddings: list[PersonEmbedding] = (
+                    self.embedding_pipeline.generate_embeddings_batch(
+                        images=cropped_persons,
+                        bboxes=bboxes,
+                        confidences=confidences,
+                        normalize_method=normalization,
+                        source_image_ids=source_ids_for_batch,
+                        batch_size=batch_size,
+                        show_progress=False,
+                    )
+                )
+
+                # Generate face embeddings if requested
+                face_embeddings = []
+                if generate_face_embeddings and face_generator:
+                    try:
+                        face_embeddings = face_generator.generate_embeddings_batch(
+                            images=cropped_persons,
+                            bboxes=bboxes,
+                            confidences=confidences,
+                            normalize_method="base",  # DeepFace handles normalization
+                            source_image_ids=source_ids_for_batch,
+                            batch_size=batch_size,
+                            show_progress=False,
+                        )
+                        logger.debug(f"Generated {len(face_embeddings)} face embeddings")
+                    except Exception as e:
+                        logger.warning(f"Face embedding generation failed: {e}")
+                        face_embeddings = [None] * len(body_embeddings)
+                else:
+                    face_embeddings = [None] * len(body_embeddings)
+
+                # Combine body and face embeddings
+                combined_embeddings = []
+                for body_emb, face_emb in zip(body_embeddings, face_embeddings):
+                    if face_emb and face_emb.face_embedding is not None:
+                        # Create multi-modal embedding
+                        from .entities import Modality
+
+                        combined_emb = PersonEmbedding(
+                            embedding_vector=body_emb.embedding_vector,
+                            subject_confidence=body_emb.subject_confidence,
+                            bbox=body_emb.bbox,
+                            normalization=body_emb.normalization,
+                            model_profile_id=body_emb.model_profile_id,
+                            hardware=body_emb.hardware,
+                            timestamp=body_emb.timestamp,
+                            source_image_id=body_emb.source_image_id,
+                            modality=Modality.BODY_FACE,
+                            face_embedding=face_emb.face_embedding,
+                            face_confidence=face_emb.face_confidence,
+                            face_bbox=face_emb.face_bbox,
+                            embedding_provider=body_emb.embedding_provider,
+                            metadata=body_emb.metadata,
+                        )
+                        combined_embeddings.append(combined_emb)
+                    else:
+                        # Body-only embedding
+                        combined_embeddings.append(body_emb)
+
+                # Package subjects
+                for embedding in combined_embeddings:
+                    subject = {
+                        "embedding": embedding.embedding_vector,
+                        "metadata": {
+                            "bbox": embedding.bbox,
+                            "confidence": embedding.subject_confidence,
+                            "hardware": embedding.hardware,
+                            "model_profile_id": embedding.model_profile_id,
+                            "normalization": embedding.normalization,
+                            "timestamp": embedding.timestamp.isoformat()
+                            if embedding.timestamp
+                            else None,
+                            "source_image": embedding.source_image_id,
+                            "modality": embedding.modality.value,
+                        },
+                    }
+
+                    # Add face embedding data if available
+                    if embedding.has_face_embedding:
+                        subject["face_embedding"] = embedding.face_embedding
+                        subject["metadata"]["face_confidence"] = embedding.face_confidence
+                        subject["metadata"]["face_bbox"] = embedding.face_bbox
+
+                    # Optionally return full PersonEmbedding object
+                    if return_multi_modal:
+                        subject["person_embedding"] = embedding
+
+                    all_subjects.append(subject)
 
         # Build response
         response = {
@@ -342,7 +590,7 @@ class DeepPerson:
         )
 
         logger.info(
-            f"Processed {len(img_paths)} image(s), "
+            f"Processed {len(normalized_images)} image(s), "
             f"generated {len(all_subjects)} embedding(s) "
             f"({multi_modal_count} multi-modal), "
             f"{len(warnings_list)} warning(s)"
@@ -352,15 +600,15 @@ class DeepPerson:
 
     def verify(
         self,
-        img1_path: Union[str, Path],
-        img2_path: Union[str, Path],
-        model_name: Optional[str] = None,
-        detector_backend: Optional[str] = None,
+        img1_path: ImageInput,
+        img2_path: ImageInput,
+        model_name: str | None = None,
+        detector_backend: str | None = None,
         distance_metric: Literal["cosine", "euclidean", "euclidean_l2"] = "cosine",
-        threshold: Optional[float] = None,
+        threshold: float | None = None,
         normalization: Literal["base", "resnet", "circle"] = "resnet",
         enforce_detection: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Verify if two images show the same person.
 
@@ -368,8 +616,8 @@ class DeepPerson:
         the same individual based on distance metrics and thresholds.
 
         Args:
-            img1_path: Path to first image
-            img2_path: Path to second image
+            img1_path: First image (str path, Path, PIL.Image, or np.ndarray)
+            img2_path: Second image (str path, Path, PIL.Image, or np.ndarray)
             model_name: Override model name (uses instance default if None)
             detector_backend: Override detector backend (uses instance default if None)
             distance_metric: Distance metric ('cosine', 'euclidean', 'euclidean_l2')
@@ -395,20 +643,52 @@ class DeepPerson:
 
         Raises:
             ValueError: If no person detected and enforce_detection=True
-            FileNotFoundError: If image files not found
+            FileNotFoundError: If image file paths not found
+            TypeError: If unsupported image type provided
 
         Examples:
+            >>> # From file paths
             >>> result = dp.verify("person1_img1.jpg", "person1_img2.jpg")
             >>> if result["verified"]:
             ...     print(f"Same person! Distance: {result['distance']:.4f}")
             >>> else:
             ...     print(f"Different persons. Distance: {result['distance']:.4f}")
             >>>
+            >>> # From PIL Images
+            >>> from PIL import Image
+            >>> pil_img1 = Image.open("person1.jpg")
+            >>> pil_img2 = Image.open("person2.jpg")
+            >>> result = dp.verify(pil_img1, pil_img2)
+            >>>
+            >>> # From NumPy arrays
+            >>> import numpy as np
+            >>> np_img1 = np.array(Image.open("person1.jpg"))
+            >>> np_img2 = np.array(Image.open("person2.jpg"))
+            >>> result = dp.verify(np_img1, np_img2)
+            >>>
+            >>> # Mixed types (PIL + path)
+            >>> result = dp.verify(pil_img1, "person2.jpg")
+            >>>
             >>> # Use different metric
-            >>> result = dp.verify("img1.jpg", "img2.jpg", distance_metric="euclidean")
+            >>> result = dp.verify(pil_img1, pil_img2, distance_metric="euclidean")
         """
+
+        # Generate display names for logging
+        def _get_display_name(img_input: ImageInput) -> str:
+            if isinstance(img_input, (str, Path)):
+                return Path(img_input).name
+            elif isinstance(img_input, Image.Image):
+                return "PIL_Image"
+            elif isinstance(img_input, np.ndarray):
+                return "NumPy_array"
+            else:
+                return "Unknown"
+
+        img1_name = _get_display_name(img1_path)
+        img2_name = _get_display_name(img2_path)
+
         logger.info(
-            f"Verifying images: {Path(img1_path).name} vs {Path(img2_path).name} "
+            f"Verifying images: {img1_name} vs {img2_name} "
             f"(metric={distance_metric}, threshold={threshold})"
         )
 
@@ -536,7 +816,9 @@ class DeepPerson:
         if face_embedding1 is not None and face_embedding2 is not None:
             try:
                 # Compute face distance
-                face_distance = compute_distance(face_embedding1, face_embedding2, metric=distance_metric)
+                face_distance = compute_distance(
+                    face_embedding1, face_embedding2, metric=distance_metric
+                )
 
                 # Convert distances to similarities for fusion scoring (0-1 range, higher = more similar)
                 body_similarity = max(0.0, 1.0 - body_distance)
@@ -599,10 +881,16 @@ class DeepPerson:
             "facial_areas": {"img1": facial_area1, "img2": facial_area2},
             # Enhanced fusion fields
             "body_distance": float(body_distance),
-            "face_distance": float(face_distance) if face_distance is not None else None,
+            "face_distance": float(face_distance)
+            if face_distance is not None
+            else None,
             "fusion_score": float(fusion_score) if fusion_score is not None else None,
-            "face_weight": fusion_metadata.get("face_weight", 0.5) if used_fusion else 0.5,
-            "body_weight": fusion_metadata.get("body_weight", 0.5) if used_fusion else 0.5,
+            "face_weight": fusion_metadata.get("face_weight", 0.5)
+            if used_fusion
+            else 0.5,
+            "body_weight": fusion_metadata.get("body_weight", 0.5)
+            if used_fusion
+            else 0.5,
             "used_fusion": used_fusion,
             "modality_available": modality_available,
         }
@@ -612,3 +900,11 @@ class DeepPerson:
             response["warnings"] = warnings_list
 
         return response
+
+    def _get_model_info(self) -> dict[str, Any]:
+        """Get model information for result metadata."""
+        return {
+            "model_name": self.model_name,
+            "feature_dim": self.embedding_pipeline.feature_dim,
+            "device": str(self.device),
+        }

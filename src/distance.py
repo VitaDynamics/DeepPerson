@@ -5,7 +5,8 @@ Provides utility functions for computing various distance metrics between embedd
 Implements cosine, euclidean, and L2-normalized euclidean distances.
 """
 
-from typing import Any, Union
+from typing import Any
+
 import numpy as np
 
 
@@ -18,7 +19,9 @@ class DistanceMetrics:
     """
 
     @staticmethod
-    def cosine_distance(embedding1: Union[np.ndarray, Any], embedding2: Union[np.ndarray, Any]) -> float:
+    def cosine_distance(
+        embedding1: np.ndarray | Any, embedding2: np.ndarray | Any
+    ) -> float:
         """
         Compute cosine distance between two embeddings.
 
@@ -73,7 +76,9 @@ class DistanceMetrics:
         return float(distance)
 
     @staticmethod
-    def euclidean_distance(embedding1: Union[np.ndarray, Any], embedding2: Union[np.ndarray, Any]) -> float:
+    def euclidean_distance(
+        embedding1: np.ndarray | Any, embedding2: np.ndarray | Any
+    ) -> float:
         """
         Compute Euclidean (L2) distance between two embeddings.
 
@@ -112,7 +117,9 @@ class DistanceMetrics:
         return float(distance)
 
     @staticmethod
-    def euclidean_l2_distance(embedding1: Union[np.ndarray, Any], embedding2: Union[np.ndarray, Any]) -> float:
+    def euclidean_l2_distance(
+        embedding1: np.ndarray | Any, embedding2: np.ndarray | Any
+    ) -> float:
         """
         Compute Euclidean distance between L2-normalized embeddings.
 

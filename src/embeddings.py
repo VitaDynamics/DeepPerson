@@ -7,7 +7,7 @@ Supports batch processing for efficiency.
 
 import logging
 from datetime import datetime
-from typing import List, Literal, Optional, Union
+from typing import Literal
 
 import numpy as np
 import torch
@@ -38,7 +38,7 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
         self,
         model_name: str,
         device: torch.device,
-        registry: Optional[ModelRegistry] = None
+        registry: ModelRegistry | None = None,
     ):
         """
         Initialize embedding pipeline.
@@ -54,6 +54,7 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
         # Get or create registry
         if registry is None:
             from .registry import get_registry
+
             registry = get_registry()
         self.registry = registry
 
@@ -82,12 +83,12 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
     def modality(self) -> str:
         """Get the modality type (always BODY for BodyEmbeddingGenerator)."""
         return Modality.BODY.value
-    
+
     @property
     def model_name(self) -> str:
         """Get the model name."""
         return self._model_name
-    
+
     # ==================== Private Methods ====================
 
     def _build_preprocessing(self) -> T.Compose:
@@ -105,22 +106,19 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
         input_size = config.get("input_size", (256, 128))  # (height, width)
 
         # Build transform pipeline
-        transforms = T.Compose([
-            T.Resize(input_size),  # Resize to (H, W)
-            T.ToTensor(),  # Convert to tensor [0, 1]
-            T.Normalize(mean=mean, std=std)  # Normalize
-        ])
-
-        logger.debug(
-            f"Preprocessing: size={input_size}, mean={mean}, std={std}"
+        transforms = T.Compose(
+            [
+                T.Resize(input_size),  # Resize to (H, W)
+                T.ToTensor(),  # Convert to tensor [0, 1]
+                T.Normalize(mean=mean, std=std),  # Normalize
+            ]
         )
+
+        logger.debug(f"Preprocessing: size={input_size}, mean={mean}, std={std}")
 
         return transforms
 
-    def preprocess_images(
-        self,
-        images: List[Image.Image]
-    ) -> torch.Tensor:
+    def preprocess_images(self, images: list[Image.Image]) -> torch.Tensor:
         """
         Preprocess a batch of PIL images.
 
@@ -139,10 +137,7 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
         return batch
 
     @torch.no_grad()
-    def extract_features(
-        self,
-        image_tensor: torch.Tensor
-    ) -> np.ndarray:
+    def extract_features(self, image_tensor: torch.Tensor) -> np.ndarray:
         """
         Extract features from preprocessed images.
 
@@ -170,7 +165,7 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
         bbox: tuple[int, int, int, int],
         confidence: float,
         normalize_method: Literal["base", "resnet", "circle"] = "resnet",
-        source_image_id: Optional[str] = None
+        source_image_id: str | None = None,
     ) -> PersonEmbedding:
         """
         Generate embedding for a single person image.
@@ -212,14 +207,14 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
 
     def generate_embeddings_batch(
         self,
-        images: List[Image.Image],
-        bboxes: List[tuple[int, int, int, int]],
-        confidences: List[float],
+        images: list[Image.Image],
+        bboxes: list[tuple[int, int, int, int]],
+        confidences: list[float],
         normalize_method: Literal["base", "resnet", "circle"] = "resnet",
-        source_image_ids: Optional[List[str]] = None,
+        source_image_ids: list[str] | None = None,
         batch_size: int = 16,
-        show_progress: bool = False
-    ) -> List[PersonEmbedding]:
+        show_progress: bool = False,
+    ) -> list[PersonEmbedding]:
         """
         Generate embeddings for multiple person images with batching.
 
@@ -272,15 +267,11 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
 
             # Create PersonEmbedding objects
             for features, bbox, conf, source_id in zip(
-                batch_features,
-                batch_bboxes,
-                batch_confidences,
-                batch_source_ids
+                batch_features, batch_bboxes, batch_confidences, batch_source_ids
             ):
                 # Normalize
                 features_normalized = normalize_embedding(
-                    features,
-                    method=normalize_method
+                    features, method=normalize_method
                 )
 
                 # Create embedding
@@ -299,6 +290,17 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
 
                 embeddings.append(embedding)
 
+            # Cleanup memory every 10 batches to prevent accumulation
+            if (batch_idx + 1) % 10 == 0 and self.device.type == "cuda":
+                torch.cuda.empty_cache()
+                logger.debug(
+                    f"Cleaned up memory after batch {batch_idx + 1}/{num_batches}"
+                )
+
+        # Final cleanup
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
         logger.info(
             f"Generated {len(embeddings)} embeddings in {num_batches} batch(es)"
         )
@@ -308,8 +310,8 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
 
 def create_embedding_pipeline(
     model_name: str = "resnet50_circle_dg",
-    device: Optional[torch.device] = None,
-    prefer_cuda: bool = True
+    device: torch.device | None = None,
+    prefer_cuda: bool = True,
 ) -> BodyEmbeddingGenerator:
     """
     Convenience function to create an BodyEmbeddingGenerator.
@@ -325,6 +327,7 @@ def create_embedding_pipeline(
     # Auto-detect device if not provided
     if device is None:
         from .utils import select_device
+
         device = select_device(prefer_cuda=prefer_cuda)
 
     pipeline = BodyEmbeddingGenerator(model_name=model_name, device=device)

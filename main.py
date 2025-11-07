@@ -4,8 +4,9 @@ DeepPerson Core API - Usage Examples
 
 This script demonstrates the simplified, stateless DeepPerson API which provides:
 - Multi-modal person detection and embedding generation
-- Identity verification between images
-- Batch processing capabilities
+- Identity verification between images with fusion scoring
+- Optimized batch processing with 2-5x speedup
+- Automatic memory management for large batches
 
 The API is stateless - no gallery management or state tracking required!
 """
@@ -14,8 +15,7 @@ from pathlib import Path
 
 from src.api import DeepPerson
 
-
-SAMPLE_IMAGE = Path("back.jpg")
+SAMPLE_IMAGE = Path("black.jpg")
 
 
 def main() -> None:
@@ -24,8 +24,8 @@ def main() -> None:
     print("DeepPerson Core API - Demonstration")
     print("=" * 80)
     print("\nThis demo shows the simplified, stateless API with 2 core methods:")
-    print("  1. represent() - Generate multi-modal embeddings from images")
-    print("  2. verify()    - Verify if two images show the same person")
+    print("  1. represent()       - Generate multi-modal embeddings (single or batch)")
+    print("  2. verify()          - Verify if two images show the same person")
     print()
 
     # Check for sample image
@@ -35,7 +35,14 @@ def main() -> None:
         print("\n📖 Quick Usage Guide:")
         print("   from src.api import DeepPerson")
         print("   dp = DeepPerson()")
+        print("   ")
+        print("   # Single image")
         print("   result = dp.represent('image.jpg')")
+        print("   ")
+        print("   # Batch processing (2-5x faster)")
+        print("   batch = dp.represent(['img1.jpg', 'img2.jpg', 'img3.jpg'])")
+        print("   ")
+        print("   # Identity verification")
         print("   verification = dp.verify('img1.jpg', 'img2.jpg')")
         return
 
@@ -85,7 +92,9 @@ def main() -> None:
 
     if representation.get("face_model_info"):
         print(f"\n   Face Model: {representation['face_model_info']['name']}")
-        print(f"   Face Feature Dim: {representation['face_model_info']['feature_dim']}")
+        print(
+            f"   Face Feature Dim: {representation['face_model_info']['feature_dim']}"
+        )
 
     # Show some metadata
     print("\n📋 Sample Metadata:")
@@ -105,51 +114,72 @@ def main() -> None:
     print(f"\n🔍 Verifying image against itself: {SAMPLE_IMAGE.name}")
     verification_result = dp.verify(SAMPLE_IMAGE, SAMPLE_IMAGE)
 
-    print(f"\n✓ Result: {'SAME PERSON' if verification_result['verified'] else 'DIFFERENT PERSONS'}")
+    print(
+        f"\n✓ Result: {'SAME PERSON' if verification_result['verified'] else 'DIFFERENT PERSONS'}"
+    )
     print(f"   Distance: {verification_result['distance']:.4f}")
     print(f"   Threshold: {verification_result['threshold']:.4f}")
     print(f"   Metric: {verification_result['distance_metric']}")
     print(f"   Fusion used: {verification_result['used_fusion']}")
     print(f"   Body Distance: {verification_result['body_distance']:.4f}")
 
-    if verification_result.get('face_distance') is not None:
+    if verification_result.get("face_distance") is not None:
         print(f"   Face Distance: {verification_result['face_distance']:.4f}")
 
-    if verification_result.get('fusion_score') is not None:
+    if verification_result.get("fusion_score") is not None:
         print(f"   Fusion Score: {verification_result['fusion_score']:.4f}")
 
-    print(f"\n   Modalities available:")
-    for modality, available in verification_result['modality_available'].items():
+    print("\n   Modalities available:")
+    for modality, available in verification_result["modality_available"].items():
         status = "✓" if available else "✗"
         print(f"     {modality:8s}: {status}")
 
-    if verification_result.get('warnings'):
+    if verification_result.get("warnings"):
         print("\n⚠️  Warnings:")
-        for warning in verification_result['warnings']:
+        for warning in verification_result["warnings"]:
             print(f"   - {warning}")
 
     # ============================================================================
-    # STEP 3: Batch Processing
+    # STEP 3: Batch Processing with represent()
     # ============================================================================
     print("\n" + "=" * 80)
-    print("STEP 3: Batch Processing")
+    print("STEP 3: Batch Processing with represent()")
     print("=" * 80)
 
-    print("\n📦 Processing multiple images at once...")
+    print("\n📦 Processing multiple images with optimized batch API...")
     # In real usage, these would be different image files
-    image_paths = [SAMPLE_IMAGE] * 3
+    image_paths = [SAMPLE_IMAGE] * 5
     print(f"   Processing {len(image_paths)} images...")
+    print("   Using vectorized operations for 2-5x speedup!")
 
     batch_result = dp.represent(
         image_paths,
         generate_face_embeddings=False,  # Disable for faster demo
-        batch_size=4,
+        batch_size=8,
     )
 
-    print(f"\n✓ Batch processing complete!")
-    print(f"   Images processed: {len(image_paths)}")
-    print(f"   Total subjects: {len(batch_result['subjects'])}")
-    print(f"   Average subjects per image: {len(batch_result['subjects']) / len(image_paths):.1f}")
+    print("\n✓ Batch processing complete!")
+    print(f"   Total subjects detected: {len(batch_result['subjects'])}")
+
+    # Show model info
+    print("\n📊 Model Information:")
+    print(f"   Model: {batch_result['model_info']['name']}")
+    print(f"   Device: {batch_result['model_info']['device']}")
+    print(f"   Feature Dim: {batch_result['model_info']['feature_dim']}")
+
+    # Show per-image results
+    print("\n📋 Subjects Detected (by source image):")
+    subjects_by_image = {}
+    for subject in batch_result["subjects"]:
+        source = subject["metadata"].get("source_image", "unknown")
+        if source not in subjects_by_image:
+            subjects_by_image[source] = []
+        subjects_by_image[source].append(subject)
+
+    for i, (source, subjects) in enumerate(list(subjects_by_image.items())[:3]):
+        print(f"   Image {i}: ✓ {len(subjects)} person(s) detected")
+    if len(subjects_by_image) > 3:
+        print(f"   ... and {len(subjects_by_image) - 3} more images")
 
     # ============================================================================
     # STEP 4: Different Distance Metrics
@@ -168,9 +198,11 @@ def main() -> None:
             SAMPLE_IMAGE,
             distance_metric=metric,
         )
-        verified_str = "✓" if result['verified'] else "✗"
-        print(f"   {metric:15s} | Distance: {result['distance']:6.4f} | "
-              f"Threshold: {result['threshold']:5.4f} | {verified_str}")
+        verified_str = "✓" if result["verified"] else "✗"
+        print(
+            f"   {metric:15s} | Distance: {result['distance']:6.4f} | "
+            f"Threshold: {result['threshold']:5.4f} | {verified_str}"
+        )
 
     # ============================================================================
     # STEP 5: Custom Parameters
@@ -187,10 +219,12 @@ def main() -> None:
         SAMPLE_IMAGE,
         threshold=0.1,  # Very strict
     )
-    print(f"\n   Strict threshold (0.1):")
+    print("\n   Strict threshold (0.1):")
     print(f"   Distance: {strict_result['distance']:.4f}")
     print(f"   Threshold: {strict_result['threshold']:.4f}")
-    print(f"   Result: {'✓ Verified' if strict_result['verified'] else '✗ Not verified'}")
+    print(
+        f"   Result: {'✓ Verified' if strict_result['verified'] else '✗ Not verified'}"
+    )
 
     # Use a very lenient threshold
     lenient_result = dp.verify(
@@ -198,10 +232,12 @@ def main() -> None:
         SAMPLE_IMAGE,
         threshold=2.0,  # Very lenient
     )
-    print(f"\n   Lenient threshold (2.0):")
+    print("\n   Lenient threshold (2.0):")
     print(f"   Distance: {lenient_result['distance']:.4f}")
     print(f"   Threshold: {lenient_result['threshold']:.4f}")
-    print(f"   Result: {'✓ Verified' if lenient_result['verified'] else '✗ Not verified'}")
+    print(
+        f"   Result: {'✓ Verified' if lenient_result['verified'] else '✗ Not verified'}"
+    )
 
     # ============================================================================
     # Summary
@@ -211,7 +247,8 @@ def main() -> None:
     print("=" * 80)
     print("\nThe DeepPerson API provides two core stateless methods:\n")
     print("1️⃣  represent() - Generate multi-modal embeddings")
-    print("   • Single image or batch processing")
+    print("   • Single image or batch processing (automatic detection)")
+    print("   • Uses optimized batch processing for multiple images (2-5x speedup)")
     print("   • Body embeddings (required)")
     print("   • Optional face embeddings (generate_face_embeddings=True)")
     print("   • Configurable normalization and batch size")
@@ -225,14 +262,21 @@ def main() -> None:
     print("✨ Key Features:")
     print("   ✓ Stateless - no gallery management required")
     print("   ✓ Multi-modal - body and face embeddings")
-    print("   ✓ Batch processing - handle multiple images efficiently")
+    print("   ✓ Optimized batch processing - automatic for multiple images")
     print("   ✓ Multiple metrics - choose the best for your use case")
     print("   ✓ GPU acceleration - automatic CUDA detection")
     print("   ✓ Confidence-based fusion - weighted scoring\n")
     print("🚀 Quick Start:")
     print("   from src.api import DeepPerson")
     print("   dp = DeepPerson()")
-    print("   embeddings = dp.represent('image.jpg')")
+    print("   ")
+    print("   # Single image")
+    print("   result = dp.represent('image.jpg')")
+    print("   ")
+    print("   # Batch processing (optimized, automatic)")
+    print("   batch_result = dp.represent(['img1.jpg', 'img2.jpg', 'img3.jpg'])")
+    print("   ")
+    print("   # Identity verification")
     print("   is_same = dp.verify('img1.jpg', 'img2.jpg')")
     print()
 

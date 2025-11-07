@@ -18,7 +18,6 @@ import os
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Optional, Union
 
 import gdown
 import requests
@@ -26,9 +25,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 # A Mapping between Model Name and its weight file path
-NAME_WEIGHT_MAPPING = {
-    "resnet50_circle_dg": "ft_ResNet50/net_last.pth"
-}
+NAME_WEIGHT_MAPPING = {"resnet50_circle_dg": "ft_ResNet50/net_last.pth"}
 
 
 class ModelManager:
@@ -47,7 +44,7 @@ class ModelManager:
     WEIGHTS_ZIP_NAME = "model.zip"
     WEIGHTS_EXTRACTED_DIR = "backbones"
 
-    def __init__(self, cache_dir: Optional[Union[str, Path]] = None):
+    def __init__(self, cache_dir: str | Path | None = None):
         """
         Initialize model manager.
 
@@ -59,7 +56,9 @@ class ModelManager:
             env_cache = os.environ.get("DEEP_PERSON_CACHE")
             if env_cache:
                 self.cache_dir = Path(env_cache)
-                logger.info(f"Using cache directory from DEEP_PERSON_CACHE: {self.cache_dir}")
+                logger.info(
+                    f"Using cache directory from DEEP_PERSON_CACHE: {self.cache_dir}"
+                )
             else:
                 # Default to user's cache directory
                 self.cache_dir = Path.home() / ".cache" / "deep_person"
@@ -92,10 +91,14 @@ class ModelManager:
         backbone_file = self.cache_dir / self.WEIGHTS_EXTRACTED_DIR / weight_path
 
         exists = backbone_file.exists() and backbone_file.stat().st_size > 0
-        logger.debug(f"Backbone file check for {name} at {backbone_file}: {'found' if exists else 'not found'}")
+        logger.debug(
+            f"Backbone file check for {name} at {backbone_file}: {'found' if exists else 'not found'}"
+        )
         return exists
 
-    def download_from_google_drive(self, file_id: str, output_path: Path, filename: str) -> Path:
+    def download_from_google_drive(
+        self, file_id: str, output_path: Path, filename: str
+    ) -> Path:
         """
         Download file from Google Drive using gdown.
 
@@ -118,10 +121,7 @@ class ModelManager:
 
         try:
             downloaded_path = gdown.download(
-                url=url,
-                output=str(file_path),
-                fuzzy=True,
-                quiet=False
+                url=url, output=str(file_path), fuzzy=True, quiet=False
             )
 
             if downloaded_path is None:
@@ -156,7 +156,7 @@ class ModelManager:
         logger.info(f"Extracting archive: {archive_path}")
 
         try:
-            with zipfile.ZipFile(archive_path, 'r') as zip_ref:
+            with zipfile.ZipFile(archive_path, "r") as zip_ref:
                 zip_ref.extractall(extract_to)
 
             logger.info(f"Successfully extracted to: {extract_to}")
@@ -202,21 +202,21 @@ class ModelManager:
             downloaded_path = self.download_from_google_drive(
                 file_id=self.WEIGHTS_GOOGLE_DRIVE_ID,
                 output_path=self.cache_dir,
-                filename=self.WEIGHTS_ZIP_NAME
+                filename=self.WEIGHTS_ZIP_NAME,
             )
             zip_path = downloaded_path
 
         # Extract archive
         try:
             extracted_dir = self.extract_zip_archive(
-                archive_path=zip_path,
-                extract_to=self.cache_dir
+                archive_path=zip_path, extract_to=self.cache_dir
             )
-            
+
             # Move the content in extracted dir into WEIGHTS_EXTRACTED_DIR
             # The zip contains a folder named "model" which we need to move
-            os.rename(extracted_dir / "model", self.cache_dir / self.WEIGHTS_EXTRACTED_DIR)
-            
+            os.rename(
+                extracted_dir / "model", self.cache_dir / self.WEIGHTS_EXTRACTED_DIR
+            )
 
             # Clean up zip file
             zip_path.unlink()
@@ -228,7 +228,9 @@ class ModelManager:
                     f"Expected backbone file not found after extraction: {backbone_file}"
                 )
 
-            logger.info(f"Successfully extracted backbone weights. File available at: {backbone_file}")
+            logger.info(
+                f"Successfully extracted backbone weights. File available at: {backbone_file}"
+            )
             return backbone_file
 
         except Exception as e:
@@ -322,11 +324,11 @@ class YOLOManager:
         "yolov8": {"variants": ["n", "s", "m", "l", "x"]},
         "yolov9": {"variants": ["t", "s", "m", "c", "e"]},
         "yolov10": {"variants": ["n", "s", "m", "b", "l", "x"]},
-        "yolov11": {"variants": ["n", "s", "m", "l", "x"]}
+        "yolov11": {"variants": ["n", "s", "m", "l", "x"]},
     }
     BASE_URL = "https://github.com/ultralytics/assets/releases/download/v0.0.0/"
 
-    def __init__(self, cache_dir: Union[str, Path]):
+    def __init__(self, cache_dir: str | Path):
         """
         Initialize YOLO manager.
 
@@ -374,7 +376,7 @@ class YOLOManager:
             response = requests.get(download_url, stream=True)
             response.raise_for_status()
 
-            with open(model_path, 'wb') as f:
+            with open(model_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
@@ -386,7 +388,7 @@ class YOLOManager:
             logger.error(f"Failed to download YOLO weights {model_name}: {e}")
             raise
 
-    def _parse_model_name(self, model_name: str) -> Optional[tuple[str, str]]:
+    def _parse_model_name(self, model_name: str) -> tuple[str, str] | None:
         """
         Parse YOLO model name to extract family and variant.
 
@@ -397,13 +399,13 @@ class YOLOManager:
             Tuple of (family, variant) or None if not supported
         """
         # Remove extension if present
-        name = model_name.replace('.pt', '')
+        name = model_name.replace(".pt", "")
 
         # Try to match YOLO patterns
         for family in self.YOLO_CONFIGS.keys():
             family_prefix = family
             if name.startswith(family_prefix):
-                variant = name[len(family_prefix):]
+                variant = name[len(family_prefix) :]
                 if variant and len(variant) == 1:  # Single letter variants
                     return family, variant
 
@@ -423,7 +425,7 @@ class YOLOManager:
 
 
 # Global model manager instance
-_model_manager: Optional[ModelManager] = None
+_model_manager: ModelManager | None = None
 
 
 def get_model_manager() -> ModelManager:

@@ -7,8 +7,10 @@ for embeddings and gallery management.
 
 import json
 import logging
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 import numpy as np
 import torch
@@ -58,8 +60,7 @@ def get_device_name(device: torch.device) -> Literal["cuda", "cpu"]:
 
 
 def normalize_embedding(
-    embedding: np.ndarray,
-    method: Literal["base", "resnet", "circle"] = "resnet"
+    embedding: np.ndarray, method: Literal["base", "resnet", "circle"] = "resnet"
 ) -> np.ndarray:
     """
     Normalize embedding vector according to specified strategy.
@@ -106,9 +107,7 @@ def normalize_embedding(
 
 
 def serialize_embedding(
-    embedding_vector: np.ndarray,
-    output_path: Path,
-    metadata: Optional[dict] = None
+    embedding_vector: np.ndarray, output_path: Path, metadata: dict | None = None
 ) -> None:
     """
     Serialize embedding vector and metadata to disk.
@@ -141,7 +140,7 @@ def serialize_embedding(
         logger.debug(f"Saved metadata to {json_path}")
 
 
-def deserialize_embedding(input_path: Path) -> tuple[np.ndarray, Optional[dict]]:
+def deserialize_embedding(input_path: Path) -> tuple[np.ndarray, dict | None]:
     """
     Load embedding vector and metadata from disk.
 
@@ -168,7 +167,7 @@ def deserialize_embedding(input_path: Path) -> tuple[np.ndarray, Optional[dict]]
     json_path = input_path.with_suffix(".json")
     metadata = None
     if json_path.exists():
-        with open(json_path, "r") as f:
+        with open(json_path) as f:
             metadata = json.load(f)
         logger.debug(f"Loaded metadata from {json_path}")
 
@@ -179,8 +178,8 @@ def serialize_gallery(
     embeddings: np.ndarray,
     subject_ids: list[str],
     output_dir: Path,
-    metadata_list: Optional[list[dict]] = None,
-    gallery_name: str = "gallery"
+    metadata_list: list[dict] | None = None,
+    gallery_name: str = "gallery",
 ) -> Path:
     """
     Serialize a gallery of embeddings with manifest.
@@ -214,7 +213,9 @@ def serialize_gallery(
     # Save embedding matrix
     embeddings_path = output_dir / f"{gallery_name}_embeddings.npy"
     np.save(embeddings_path, embeddings)
-    logger.info(f"Saved gallery embeddings to {embeddings_path}, shape: {embeddings.shape}")
+    logger.info(
+        f"Saved gallery embeddings to {embeddings_path}, shape: {embeddings.shape}"
+    )
 
     # Create manifest
     manifest = {
@@ -222,7 +223,7 @@ def serialize_gallery(
         "n_subjects": len(subject_ids),
         "feature_dim": embeddings.shape[1],
         "subject_ids": subject_ids,
-        "metadata": metadata_list or [{} for _ in subject_ids]
+        "metadata": metadata_list or [{} for _ in subject_ids],
     }
 
     manifest_path = output_dir / f"{gallery_name}_manifest.json"
@@ -234,8 +235,7 @@ def serialize_gallery(
 
 
 def deserialize_gallery(
-    gallery_dir: Path,
-    gallery_name: str = "gallery"
+    gallery_dir: Path, gallery_name: str = "gallery"
 ) -> tuple[np.ndarray, list[str], list[dict]]:
     """
     Load a serialized gallery from disk.
@@ -259,14 +259,16 @@ def deserialize_gallery(
         raise FileNotFoundError(f"Gallery embeddings not found: {embeddings_path}")
 
     embeddings = np.load(embeddings_path)
-    logger.info(f"Loaded gallery embeddings from {embeddings_path}, shape: {embeddings.shape}")
+    logger.info(
+        f"Loaded gallery embeddings from {embeddings_path}, shape: {embeddings.shape}"
+    )
 
     # Load manifest
     manifest_path = gallery_dir / f"{gallery_name}_manifest.json"
     if not manifest_path.exists():
         raise FileNotFoundError(f"Gallery manifest not found: {manifest_path}")
 
-    with open(manifest_path, "r") as f:
+    with open(manifest_path) as f:
         manifest = json.load(f)
 
     subject_ids = manifest["subject_ids"]
@@ -279,15 +281,14 @@ def deserialize_gallery(
             f"manifest subject_ids count ({len(subject_ids)})"
         )
 
-    logger.info(f"Loaded gallery manifest from {manifest_path}, {len(subject_ids)} subjects")
+    logger.info(
+        f"Loaded gallery manifest from {manifest_path}, {len(subject_ids)} subjects"
+    )
 
     return embeddings, subject_ids, metadata_list
 
 
-def validate_embedding_dimension(
-    embedding: np.ndarray,
-    expected_dim: int
-) -> None:
+def validate_embedding_dimension(embedding: np.ndarray, expected_dim: int) -> None:
     """
     Validate that embedding has expected dimensionality.
 
@@ -306,9 +307,7 @@ def validate_embedding_dimension(
 
 
 def validate_gallery_compatibility(
-    gallery_path: Path,
-    model_profile_id: str,
-    feature_dimension: int
+    gallery_path: Path, model_profile_id: str, feature_dimension: int
 ) -> bool:
     """
     Validate that a gallery is compatible with a model profile.
@@ -328,7 +327,7 @@ def validate_gallery_compatibility(
         return False
 
     try:
-        with open(manifest_path, 'r') as f:
+        with open(manifest_path) as f:
             manifest = json.load(f)
 
         # Check model profile
@@ -352,3 +351,164 @@ def validate_gallery_compatibility(
     except Exception as e:
         logger.error(f"Error validating gallery compatibility: {e}")
         return False
+
+
+# ==================== Batch Processing Timing Utilities ====================
+
+
+class TimingContext:
+    """
+    Context manager for timing code blocks in batch processing.
+
+    Collects timing data for different processing stages.
+
+    Examples:
+        >>> timer = TimingContext()
+        >>> with timer.stage("detection"):
+        ...     # detection code
+        ...     pass
+        >>> with timer.stage("embedding"):
+        ...     # embedding code
+        ...     pass
+        >>> timer.get_timings()
+        {'detection': 0.123, 'embedding': 0.456, 'total': 0.579}
+    """
+
+    def __init__(self) -> None:
+        """Initialize timing context."""
+        self._timings: dict[str, float] = {}
+        self._start_time: float = time.time()
+
+    @contextmanager
+    def stage(self, stage_name: str):
+        """
+        Time a specific processing stage.
+
+        Args:
+            stage_name: Name of the stage being timed
+
+        Yields:
+            None
+        """
+        start = time.time()
+        try:
+            yield
+        finally:
+            elapsed = time.time() - start
+            self._timings[stage_name] = elapsed
+            logger.debug(f"Stage '{stage_name}' took {elapsed:.4f}s")
+
+    def get_timings(self) -> dict[str, float]:
+        """
+        Get all collected timing data.
+
+        Returns:
+            Dictionary mapping stage names to elapsed times in seconds
+        """
+        total = time.time() - self._start_time
+        return {**self._timings, "total": total}
+
+    def reset(self) -> None:
+        """Reset all timing data."""
+        self._timings.clear()
+        self._start_time = time.time()
+
+
+def get_hardware_info(device: torch.device) -> dict[str, any]:
+    """
+    Get hardware information for batch processing metadata.
+
+    Args:
+        device: torch.device being used
+
+    Returns:
+        Dictionary with hardware information
+
+    Examples:
+        >>> device = torch.device("cuda:0")
+        >>> info = get_hardware_info(device)
+        >>> print(info)
+        {'cuda_available': True, 'cuda_device': 'NVIDIA GeForce RTX 3080', ...}
+    """
+    info = {
+        "cuda_available": torch.cuda.is_available(),
+        "device_type": device.type,
+        "device_index": device.index if device.type == "cuda" else None,
+    }
+
+    if torch.cuda.is_available() and device.type == "cuda":
+        device_idx = device.index or 0
+        info["cuda_device"] = torch.cuda.get_device_name(device_idx)
+        info["cuda_capability"] = ".".join(
+            str(x) for x in torch.cuda.get_device_capability(device_idx)
+        )
+        info["cuda_memory_total_gb"] = (
+            torch.cuda.get_device_properties(device_idx).total_memory / 1024**3
+        )
+
+    return info
+
+
+def cleanup_memory(device: torch.device) -> None:
+    """
+    Clean up memory after batch processing.
+
+    Clears PyTorch cache and runs garbage collection to free memory,
+    especially important for large batches on GPU.
+
+    Args:
+        device: torch.device to clean up
+
+    Examples:
+        >>> device = torch.device("cuda:0")
+        >>> # After processing large batch
+        >>> cleanup_memory(device)
+    """
+    import gc
+
+    # Clear Python garbage
+    gc.collect()
+
+    # Clear CUDA cache if on GPU
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        logger.debug(f"Cleaned up CUDA memory on {device}")
+
+
+def get_memory_stats(device: torch.device) -> dict[str, float]:
+    """
+    Get current memory usage statistics.
+
+    Args:
+        device: torch.device to query
+
+    Returns:
+        Dictionary with memory stats in GB
+
+    Examples:
+        >>> device = torch.device("cuda:0")
+        >>> stats = get_memory_stats(device)
+        >>> print(f"Used: {stats['allocated_gb']:.2f} GB")
+    """
+    stats = {
+        "allocated_gb": 0.0,
+        "reserved_gb": 0.0,
+        "free_gb": 0.0,
+    }
+
+    if device.type == "cuda" and torch.cuda.is_available():
+        device_idx = device.index or 0
+        allocated = torch.cuda.memory_allocated(device_idx) / 1024**3
+        reserved = torch.cuda.memory_reserved(device_idx) / 1024**3
+        total = torch.cuda.get_device_properties(device_idx).total_memory / 1024**3
+        free = total - allocated
+
+        stats = {
+            "allocated_gb": allocated,
+            "reserved_gb": reserved,
+            "free_gb": free,
+            "total_gb": total,
+        }
+
+    return stats

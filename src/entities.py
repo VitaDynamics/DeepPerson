@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 import numpy as np
 
@@ -26,6 +26,7 @@ class Modality(str, Enum):
         BODY_FACE: Combined body and face embeddings
         UNKNOWN: Modality not determined
     """
+
     BODY = "BODY"
     FACE = "FACE"
     BODY_FACE = "BODY_FACE"
@@ -95,8 +96,11 @@ class PersonEmbedding:
         ...     hardware="cuda"
         ... )
     """
+
     # Core fields (required)
-    embedding_vector: np.ndarray  # Body embedding, shape: (feature_dim,), dtype: float32
+    embedding_vector: (
+        np.ndarray
+    )  # Body embedding, shape: (feature_dim,), dtype: float32
     subject_confidence: float
     bbox: tuple[int, int, int, int]
     normalization: Literal["base", "resnet", "circle"]
@@ -104,22 +108,22 @@ class PersonEmbedding:
     hardware: Literal["cuda", "cpu"]
 
     # Optional core fields
-    timestamp: Optional[datetime] = None
-    source_image_id: Optional[str] = None
+    timestamp: datetime | None = None
+    source_image_id: str | None = None
 
     # Multi-modal support (NEW)
     modality: Modality = Modality.BODY
-    face_embedding: Optional[np.ndarray] = None
-    face_confidence: Optional[float] = None
-    face_bbox: Optional[tuple[int, int, int, int]] = None
+    face_embedding: np.ndarray | None = None
+    face_confidence: float | None = None
+    face_bbox: tuple[int, int, int, int] | None = None
 
     # User gallery support (NEW)
-    user_id: Optional[str] = None
-    embedding_id: Optional[str] = None
-    cluster_id: Optional[str] = None
-    quality_score: Optional[float] = None
-    embedding_provider: Optional[str] = None
-    embedding_version: Optional[str] = None
+    user_id: str | None = None
+    embedding_id: str | None = None
+    cluster_id: str | None = None
+    quality_score: float | None = None
+    embedding_provider: str | None = None
+    embedding_version: str | None = None
 
     # Additional metadata
     metadata: dict = field(default_factory=dict)
@@ -189,7 +193,7 @@ class PersonEmbedding:
         return len(self.embedding_vector)
 
     @property
-    def face_dimension(self) -> Optional[int]:
+    def face_dimension(self) -> int | None:
         """Get the dimensionality of the face embedding (if present)."""
         return len(self.face_embedding) if self.face_embedding is not None else None
 
@@ -208,7 +212,7 @@ class PersonEmbedding:
 
     def compute_quality_score(
         self,
-        detection_confidence: Optional[float] = None,
+        detection_confidence: float | None = None,
         normalization_check: bool = True,
     ) -> float:
         """
@@ -235,7 +239,11 @@ class PersonEmbedding:
             return 0.0
 
         # Start with detection confidence
-        confidence = detection_confidence if detection_confidence is not None else self.subject_confidence
+        confidence = (
+            detection_confidence
+            if detection_confidence is not None
+            else self.subject_confidence
+        )
         quality = confidence
 
         # Check normalization
@@ -259,8 +267,8 @@ class PersonEmbedding:
         self,
         face_embedding: np.ndarray,
         face_confidence: float,
-        face_bbox: Optional[tuple[int, int, int, int]] = None,
-        **additional_fields
+        face_bbox: tuple[int, int, int, int] | None = None,
+        **additional_fields,
     ) -> "PersonEmbedding":
         """
         Create a new PersonEmbedding with face embedding merged in.
@@ -336,6 +344,7 @@ class ModelProfile:
         requires_cuda: Whether GPU is recommended for optimal performance
         preprocess_config: Preprocessing configuration (mean, std, resize, crop settings)
     """
+
     identifier: str
     backbone_path: Path
     feature_dim: int
@@ -359,6 +368,7 @@ class GalleryEntry:
         metadata: Additional attributes (role, camera, notes, etc.)
         created_at: Timestamp when entry was added to gallery
     """
+
     embedding: PersonEmbedding
     subject_id: str
     metadata: dict = field(default_factory=dict)
@@ -376,6 +386,7 @@ class SimilarityMatch:
         score: Normalized similarity score (higher is more similar)
         metadata: Gallery entry metadata passthrough
     """
+
     gallery_subject_id: str
     distance: float
     score: float
@@ -393,7 +404,87 @@ class SimilarityResult:
         distance_metric: Metric used for distance computation
         threshold: Decision boundary used for verification (if applicable)
     """
+
     matches: list[SimilarityMatch]
     distance_metric: Literal["cosine", "euclidean", "euclidean_l2"]
-    threshold: Optional[float] = None
-    query_id: Optional[str] = None
+    threshold: float | None = None
+    query_id: str | None = None
+
+
+# ==================== Batch Processing Entities ====================
+
+
+@dataclass
+class BatchMetadata:
+    """
+    Metadata for batch processing operations.
+
+    Tracks performance metrics, hardware information, and processing statistics.
+
+    Attributes:
+        batch_id: Unique identifier for this batch
+        total_images: Total number of input images
+        processed_images: Number of successfully processed images
+        failed_images: Number of images that failed to process
+        processing_stages: Time breakdown by stage (detection, embedding, etc.)
+        model_versions: Version info for all models used
+        hardware_info: Device information (GPU/CPU)
+    """
+
+    batch_id: str
+    total_images: int
+    processed_images: int
+    failed_images: int
+    processing_stages: dict[str, float] = field(default_factory=dict)
+    model_versions: dict[str, str] = field(default_factory=dict)
+    hardware_info: dict[str, any] = field(default_factory=dict)
+
+
+@dataclass
+class BatchResult:
+    """
+    Result from batch representation operation.
+
+    Contains results for all processed images with batch-level metadata.
+
+    Attributes:
+        results: List of single-image results (one per input image)
+        batch_metadata: Information about the batch operation
+        processing_time: Total time in seconds for batch processing
+        success_count: Number of successfully processed images
+        error_count: Number of failed images
+    """
+
+    results: list[dict]  # List of SingleImageResult dicts
+    batch_metadata: BatchMetadata
+    processing_time: float
+    success_count: int
+    error_count: int
+
+    def __post_init__(self):
+        """Validate batch result consistency."""
+        # Validate counts match
+        if self.success_count + self.error_count != len(self.results):
+            raise ValueError(
+                f"success_count ({self.success_count}) + error_count ({self.error_count}) "
+                f"must equal total results ({len(self.results)})"
+            )
+
+        # Validate metadata matches
+        if self.batch_metadata.total_images != len(self.results):
+            raise ValueError(
+                f"batch_metadata.total_images ({self.batch_metadata.total_images}) "
+                f"must equal len(results) ({len(self.results)})"
+            )
+
+        if self.batch_metadata.processed_images != self.success_count:
+            raise ValueError(
+                f"batch_metadata.processed_images ({self.batch_metadata.processed_images}) "
+                f"must equal success_count ({self.success_count})"
+            )
+
+        if self.batch_metadata.failed_images != self.error_count:
+            raise ValueError(
+                f"batch_metadata.failed_images ({self.batch_metadata.failed_images}) "
+                f"must equal error_count ({self.error_count})"
+            )

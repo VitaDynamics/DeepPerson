@@ -8,7 +8,7 @@ Provides default model profiles and verification thresholds.
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 import torch
 
@@ -33,9 +33,9 @@ logger = logging.getLogger(__name__)
 # from layumi/Person_reID_baseline_pytorch benchmarks
 DEFAULT_THRESHOLDS = {
     "resnet50_circle_dg": {
-        "cosine": 0.40,        # Conservative threshold for cosine distance
-        "euclidean": 10.0,     # Reasonable for 2048-dimensional embeddings
-        "euclidean_l2": 0.85   # Normalized euclidean distance threshold
+        "cosine": 0.40,  # Conservative threshold for cosine distance
+        "euclidean": 10.0,  # Reasonable for 2048-dimensional embeddings
+        "euclidean_l2": 0.85,  # Normalized euclidean distance threshold
     }
 }
 
@@ -63,12 +63,14 @@ class ModelRegistry:
 
     def __init__(self):
         """Initialize model registry with default profiles and face model cache."""
-        self._profiles: Dict[str, ModelProfile] = {}
-        self._model_cache: Dict[str, torch.nn.Module] = {}
-        self._thresholds: Dict[str, Dict[str, float]] = DEFAULT_THRESHOLDS.copy()
+        self._profiles: dict[str, ModelProfile] = {}
+        self._model_cache: dict[str, torch.nn.Module] = {}
+        self._thresholds: dict[str, dict[str, float]] = DEFAULT_THRESHOLDS.copy()
 
         # Face embedding model cache (DeepFace-based)
-        self._face_model_cache: Dict[Tuple[str, str], Any] = {}  # Key: (model_name, detector_backend)
+        self._face_model_cache: dict[
+            tuple[str, str], Any
+        ] = {}  # Key: (model_name, detector_backend)
         self._face_lock = threading.RLock()  # Separate lock for face models
 
         # Register default models
@@ -101,7 +103,7 @@ class ModelRegistry:
                 "input_size": (256, 128),  # (height, width)
                 "interpolation": "bilinear",
                 "padding": 10,  # For random erasing augmentation during training
-            }
+            },
         )
         self.register_profile(resnet50_profile)
         logger.info(f"Registered default profile: {resnet50_profile.identifier}")
@@ -156,10 +158,7 @@ class ModelRegistry:
         return list(self._profiles.keys())
 
     def load_model(
-        self,
-        model_name: str,
-        device: torch.device,
-        force_reload: bool = False
+        self, model_name: str, device: torch.device, force_reload: bool = False
     ) -> torch.nn.Module:
         """
         Load a model instance with caching.
@@ -197,9 +196,7 @@ class ModelRegistry:
         return model
 
     def _load_model_from_profile(
-        self,
-        profile: ModelProfile,
-        device: torch.device
+        self, profile: ModelProfile, device: torch.device
     ) -> torch.nn.Module:
         """
         Load model from profile configuration.
@@ -221,18 +218,20 @@ class ModelRegistry:
 
             # Use model_manager for automatic downloading if backbone_path doesn't exist
             if not profile.backbone_path.exists():
-                logger.info(f"Backbone weights not found at {profile.backbone_path}, using model_manager")
+                logger.info(
+                    f"Backbone weights not found at {profile.backbone_path}, using model_manager"
+                )
                 model = resnet50_circle_dg.load_model(
                     weights_path=None,  # Use model_manager
                     device=device,
-                    use_model_manager=True
+                    use_model_manager=True,
                 )
             else:
                 # Use existing weights
                 model = resnet50_circle_dg.load_model(
                     weights_path=profile.backbone_path,
                     device=device,
-                    use_model_manager=False
+                    use_model_manager=False,
                 )
         else:
             raise ValueError(f"Unknown model identifier: {profile.identifier}")
@@ -243,9 +242,7 @@ class ModelRegistry:
         return model
 
     def get_verification_threshold(
-        self,
-        model_name: str,
-        distance_metric: str
+        self, model_name: str, distance_metric: str
     ) -> float:
         """
         Get default verification threshold for a model and metric.
@@ -272,7 +269,7 @@ class ModelRegistry:
             generic_thresholds = {
                 "cosine": 0.40,
                 "euclidean": 10.0,
-                "euclidean_l2": 0.85
+                "euclidean_l2": 0.85,
             }
             return generic_thresholds.get(distance_metric, 0.40)
 
@@ -287,10 +284,7 @@ class ModelRegistry:
         return model_thresholds[distance_metric]
 
     def set_verification_threshold(
-        self,
-        model_name: str,
-        distance_metric: str,
-        threshold: float
+        self, model_name: str, distance_metric: str, threshold: float
     ) -> None:
         """
         Override default verification threshold.
@@ -304,9 +298,7 @@ class ModelRegistry:
             self._thresholds[model_name] = {}
 
         self._thresholds[model_name][distance_metric] = threshold
-        logger.info(
-            f"Set threshold for {model_name}/{distance_metric}: {threshold}"
-        )
+        logger.info(f"Set threshold for {model_name}/{distance_metric}: {threshold}")
 
     def clear_cache(self) -> None:
         """
@@ -318,7 +310,9 @@ class ModelRegistry:
         self._model_cache.clear()
         logger.info(f"Cleared model cache ({count} models)")
 
-    def remove_from_cache(self, model_name: str, device: Optional[torch.device] = None) -> None:
+    def remove_from_cache(
+        self, model_name: str, device: torch.device | None = None
+    ) -> None:
         """
         Remove specific model from cache.
 
@@ -329,8 +323,7 @@ class ModelRegistry:
         if device is None:
             # Remove all cached versions of this model
             keys_to_remove = [
-                k for k in self._model_cache.keys()
-                if k.startswith(f"{model_name}_")
+                k for k in self._model_cache.keys() if k.startswith(f"{model_name}_")
             ]
         else:
             # Remove specific device version
@@ -350,7 +343,7 @@ class ModelRegistry:
         self,
         model_name: str,
         detector_backend: str = "opencv",
-        force_reload: bool = False
+        force_reload: bool = False,
     ) -> Any:
         """
         Load and cache a face embedding model using DeepFace.
@@ -391,7 +384,7 @@ class ModelRegistry:
                 "model_name": model_name,
                 "detector_backend": detector_backend,
                 "enforce_detection": False,
-                "align": True
+                "align": True,
             }
 
             # Store configuration (DeepFace handles actual model caching internally)
@@ -400,7 +393,7 @@ class ModelRegistry:
 
             return face_model_config
 
-    def get_cached_face_models(self) -> list[Tuple[str, str]]:
+    def get_cached_face_models(self) -> list[tuple[str, str]]:
         """
         Get list of cached face models.
 
@@ -422,7 +415,7 @@ class ModelRegistry:
             self._face_model_cache.clear()
             logger.info(f"Cleared face model cache ({count} configurations)")
 
-    def get_face_model_cache_info(self) -> Dict[str, Any]:
+    def get_face_model_cache_info(self) -> dict[str, Any]:
         """
         Get information about face model cache.
 
@@ -435,13 +428,11 @@ class ModelRegistry:
                     {"model_name": model, "detector_backend": backend}
                     for model, backend in self._face_model_cache.keys()
                 ],
-                "cache_size": len(self._face_model_cache)
+                "cache_size": len(self._face_model_cache),
             }
 
     def remove_face_model_from_cache(
-        self,
-        model_name: str,
-        detector_backend: Optional[str] = None
+        self, model_name: str, detector_backend: str | None = None
     ) -> None:
         """
         Remove specific face model(s) from cache.
@@ -454,13 +445,14 @@ class ModelRegistry:
             if detector_backend is None:
                 # Remove all cached versions of this model
                 keys_to_remove = [
-                    k for k in self._face_model_cache.keys()
-                    if k[0] == model_name
+                    k for k in self._face_model_cache.keys() if k[0] == model_name
                 ]
             else:
                 # Remove specific model/detector combination
                 cache_key = (model_name, detector_backend)
-                keys_to_remove = [cache_key] if cache_key in self._face_model_cache else []
+                keys_to_remove = (
+                    [cache_key] if cache_key in self._face_model_cache else []
+                )
 
             for key in keys_to_remove:
                 del self._face_model_cache[key]
