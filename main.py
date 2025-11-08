@@ -67,41 +67,28 @@ def main() -> None:
     representation = dp.represent(
         SAMPLE_IMAGE,
         generate_face_embeddings=True,
-        return_multi_modal=False,
     )
 
-    subjects = representation["subjects"]
+    subjects = representation
     if not subjects:
         print("❌ No persons detected in the sample image.")
         return
 
     primary_subject = subjects[0]
     print(f"✓ Detected {len(subjects)} person(s)")
-    print(f"   Body embedding: {primary_subject['embedding'].shape}")
+    print(f"   Body embedding: {primary_subject.embedding_vector.shape}")
 
-    face_embedding = primary_subject.get("face_embedding")
+    face_embedding = primary_subject.face_embedding
     if face_embedding is not None:
         print(f"   Face embedding:  {face_embedding.shape} ✓")
     else:
         print("   Face embedding:  Not available")
 
-    print("\n📊 Model Information:")
-    print(f"   Model: {representation['model_info']['name']}")
-    print(f"   Device: {representation['model_info']['device']}")
-    print(f"   Feature Dim: {representation['model_info']['feature_dim']}")
-
-    if representation.get("face_model_info"):
-        print(f"\n   Face Model: {representation['face_model_info']['name']}")
-        print(
-            f"   Face Feature Dim: {representation['face_model_info']['feature_dim']}"
-        )
-
     # Show some metadata
     print("\n📋 Sample Metadata:")
-    metadata = primary_subject["metadata"]
-    print(f"   Confidence: {metadata['confidence']:.3f}")
-    print(f"   Normalization: {metadata['normalization']}")
-    print(f"   Modality: {metadata['modality']}")
+    print(f"   Confidence: {primary_subject.subject_confidence:.3f}")
+    print(f"   Normalization: {primary_subject.normalization}")
+    print(f"   Modality: {primary_subject.modality.value}")
 
     # ============================================================================
     # STEP 2: Identity Verification
@@ -115,28 +102,28 @@ def main() -> None:
     verification_result = dp.verify(SAMPLE_IMAGE, SAMPLE_IMAGE)
 
     print(
-        f"\n✓ Result: {'SAME PERSON' if verification_result['verified'] else 'DIFFERENT PERSONS'}"
+        f"\n✓ Result: {'SAME PERSON' if verification_result.verified else 'DIFFERENT PERSONS'}"
     )
-    print(f"   Distance: {verification_result['distance']:.4f}")
-    print(f"   Threshold: {verification_result['threshold']:.4f}")
-    print(f"   Metric: {verification_result['distance_metric']}")
-    print(f"   Fusion used: {verification_result['used_fusion']}")
-    print(f"   Body Distance: {verification_result['body_distance']:.4f}")
+    print(f"   Distance: {verification_result.distance:.4f}")
+    print(f"   Threshold: {verification_result.threshold:.4f}")
+    print(f"   Metric: {verification_result.distance_metric}")
+    print(f"   Fusion used: {verification_result.used_fusion}")
+    print(f"   Body Distance: {verification_result.body_distance:.4f}")
 
-    if verification_result.get("face_distance") is not None:
-        print(f"   Face Distance: {verification_result['face_distance']:.4f}")
+    if verification_result.face_distance is not None:
+        print(f"   Face Distance: {verification_result.face_distance:.4f}")
 
-    if verification_result.get("fusion_score") is not None:
-        print(f"   Fusion Score: {verification_result['fusion_score']:.4f}")
+    if verification_result.fusion_score is not None:
+        print(f"   Fusion Score: {verification_result.fusion_score:.4f}")
 
     print("\n   Modalities available:")
-    for modality, available in verification_result["modality_available"].items():
+    for modality, available in verification_result.modality_available.items():
         status = "✓" if available else "✗"
         print(f"     {modality:8s}: {status}")
 
-    if verification_result.get("warnings"):
+    if verification_result.warnings:
         print("\n⚠️  Warnings:")
-        for warning in verification_result["warnings"]:
+        for warning in verification_result.warnings:
             print(f"   - {warning}")
 
     # ============================================================================
@@ -159,19 +146,13 @@ def main() -> None:
     )
 
     print("\n✓ Batch processing complete!")
-    print(f"   Total subjects detected: {len(batch_result['subjects'])}")
-
-    # Show model info
-    print("\n📊 Model Information:")
-    print(f"   Model: {batch_result['model_info']['name']}")
-    print(f"   Device: {batch_result['model_info']['device']}")
-    print(f"   Feature Dim: {batch_result['model_info']['feature_dim']}")
+    print(f"   Total subjects detected: {len(batch_result)}")
 
     # Show per-image results
     print("\n📋 Subjects Detected (by source image):")
     subjects_by_image = {}
-    for subject in batch_result["subjects"]:
-        source = subject["metadata"].get("source_image", "unknown")
+    for subject in batch_result:
+        source = subject.source_image_id or "unknown"
         if source not in subjects_by_image:
             subjects_by_image[source] = []
         subjects_by_image[source].append(subject)
@@ -198,10 +179,10 @@ def main() -> None:
             SAMPLE_IMAGE,
             distance_metric=metric,
         )
-        verified_str = "✓" if result["verified"] else "✗"
+        verified_str = "✓" if result.verified else "✗"
         print(
-            f"   {metric:15s} | Distance: {result['distance']:6.4f} | "
-            f"Threshold: {result['threshold']:5.4f} | {verified_str}"
+            f"   {metric:15s} | Distance: {result.distance:6.4f} | "
+            f"Threshold: {result.threshold:5.4f} | {verified_str}"
         )
 
     # ============================================================================
@@ -220,10 +201,10 @@ def main() -> None:
         threshold=0.1,  # Very strict
     )
     print("\n   Strict threshold (0.1):")
-    print(f"   Distance: {strict_result['distance']:.4f}")
-    print(f"   Threshold: {strict_result['threshold']:.4f}")
+    print(f"   Distance: {strict_result.distance:.4f}")
+    print(f"   Threshold: {strict_result.threshold:.4f}")
     print(
-        f"   Result: {'✓ Verified' if strict_result['verified'] else '✗ Not verified'}"
+        f"   Result: {'✓ Verified' if strict_result.verified else '✗ Not verified'}"
     )
 
     # Use a very lenient threshold
@@ -233,10 +214,10 @@ def main() -> None:
         threshold=2.0,  # Very lenient
     )
     print("\n   Lenient threshold (2.0):")
-    print(f"   Distance: {lenient_result['distance']:.4f}")
-    print(f"   Threshold: {lenient_result['threshold']:.4f}")
+    print(f"   Distance: {lenient_result.distance:.4f}")
+    print(f"   Threshold: {lenient_result.threshold:.4f}")
     print(
-        f"   Result: {'✓ Verified' if lenient_result['verified'] else '✗ Not verified'}"
+        f"   Result: {'✓ Verified' if lenient_result.verified else '✗ Not verified'}"
     )
 
     # ============================================================================
