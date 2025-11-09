@@ -18,7 +18,7 @@ from PIL import Image
 from .detectors import DetectorFactory, PersonDetector
 from .distance import compute_distance
 from .embeddings import BodyEmbeddingGenerator
-from .entities import PersonEmbedding
+from .entities import ComparisonResult, PersonEmbedding, RepresentationResult
 from .fusion import FusionScorer
 from .registry import get_registry
 from .utils import select_device
@@ -41,16 +41,16 @@ class DeepPerson:
         >>> dp = DeepPerson(model_name="resnet50_circle_dg")
         >>>
         >>> # Generate embeddings for persons in image
-        >>> result = dp.represent("image.jpg")
+        >>> embeddings = dp.represent("image.jpg")
         >>>
         >>> # Access embeddings
-        >>> for subject in result["subjects"]:
-        ...     print(f"Embedding shape: {subject['embedding'].shape}")
-        ...     print(f"Confidence: {subject['metadata']['confidence']}")
+        >>> for embedding in embeddings:
+        ...     print(f"Embedding shape: {embedding.embedding_vector.shape}")
+        ...     print(f"Confidence: {embedding.subject_confidence}")
         >>>
         >>> # Verify if two images show the same person
         >>> result = dp.verify("person1.jpg", "person2.jpg")
-        >>> print(f"Same person: {result['verified']}")
+        >>> print(f"Same person: {result.verified}")
     """
 
     def __init__(
@@ -182,7 +182,7 @@ class DeepPerson:
         face_model_name: str = "Facenet",
         face_detector_backend: str = "opencv",
         return_multi_modal: bool = False,
-    ) -> dict[str, Any]:
+    ) -> RepresentationResult:
         """
         Generate person embeddings from image(s) with optional multi-modal support.
 
@@ -201,16 +201,12 @@ class DeepPerson:
             return_multi_modal: Return multi-modal PersonEmbedding objects
 
         Returns:
-            Dictionary containing:
-                - subjects: List of detected persons with embeddings and metadata
-                - warnings: List of warning messages (e.g., no detection)
-                - model_info: Model and hardware information
-                - face_model_info: Face model information (if generate_face_embeddings=True)
+            A RepresentationResult object containing the embeddings and metadata.
 
         Examples:
             >>> # From file path
             >>> result = dp.represent("person.jpg")
-            >>> print(f"Detected {len(result['subjects'])} person(s)")
+            >>> print(f"Detected {len(result.subjects)} person(s)")
             >>>
             >>> # From PIL Image
             >>> from PIL import Image
@@ -228,9 +224,9 @@ class DeepPerson:
             ...     generate_face_embeddings=True,
             ...     face_model_name="Facenet"
             ... )
-            >>> for subject in result["subjects"]:
-            ...     body_emb = subject["embedding"]  # Body embedding
-            ...     face_emb = subject.get("face_embedding")  # Face embedding (if detected)
+            >>> for embedding in result.subjects:
+            ...     body_emb = embedding.embedding_vector  # Body embedding
+            ...     face_emb = embedding.face_embedding  # Face embedding (if detected)
             ...     print(f"Body: {body_emb.shape}, Face: {face_emb.shape if face_emb is not None else 'None'}")
             >>>
             >>> # Batch processing (all same type)
@@ -412,33 +408,7 @@ class DeepPerson:
 
                 # Package subjects
                 for embedding in combined_embeddings:
-                    subject = {
-                        "embedding": embedding.embedding_vector,
-                        "metadata": {
-                            "bbox": embedding.bbox,
-                            "confidence": embedding.subject_confidence,
-                            "hardware": embedding.hardware,
-                            "model_profile_id": embedding.model_profile_id,
-                            "normalization": embedding.normalization,
-                            "timestamp": embedding.timestamp.isoformat()
-                            if embedding.timestamp
-                            else None,
-                            "source_image": embedding.source_image_id,
-                            "modality": embedding.modality.value,
-                        },
-                    }
-
-                    # Add face embedding data if available
-                    if embedding.has_face_embedding:
-                        subject["face_embedding"] = embedding.face_embedding
-                        subject["metadata"]["face_confidence"] = embedding.face_confidence
-                        subject["metadata"]["face_bbox"] = embedding.face_bbox
-
-                    # Optionally return full PersonEmbedding object
-                    if return_multi_modal:
-                        subject["person_embedding"] = embedding
-
-                    all_subjects.append(subject)
+                    all_subjects.append(embedding)
         else:
             # Single image - use sequential processing
             for pil_image, source_id in zip(normalized_images, source_ids):
@@ -536,67 +506,35 @@ class DeepPerson:
 
                 # Package subjects
                 for embedding in combined_embeddings:
-                    subject = {
-                        "embedding": embedding.embedding_vector,
-                        "metadata": {
-                            "bbox": embedding.bbox,
-                            "confidence": embedding.subject_confidence,
-                            "hardware": embedding.hardware,
-                            "model_profile_id": embedding.model_profile_id,
-                            "normalization": embedding.normalization,
-                            "timestamp": embedding.timestamp.isoformat()
-                            if embedding.timestamp
-                            else None,
-                            "source_image": embedding.source_image_id,
-                            "modality": embedding.modality.value,
-                        },
-                    }
-
-                    # Add face embedding data if available
-                    if embedding.has_face_embedding:
-                        subject["face_embedding"] = embedding.face_embedding
-                        subject["metadata"]["face_confidence"] = embedding.face_confidence
-                        subject["metadata"]["face_bbox"] = embedding.face_bbox
-
-                    # Optionally return full PersonEmbedding object
-                    if return_multi_modal:
-                        subject["person_embedding"] = embedding
-
-                    all_subjects.append(subject)
+                    all_subjects.append(embedding)
 
         # Build response
-        response = {
-            "subjects": all_subjects,
-            "warnings": warnings_list if warnings_list else None,
-            "model_info": {
-                "name": self.model_name,
-                "device": str(self.device),
-                "detector_backend": detector_backend or self.detector_backend,
-                "feature_dim": self.embedding_pipeline.profile.feature_dim,
-            },
+        model_info = {
+            "name": self.model_name,
+            "device": str(self.device),
+            "detector_backend": detector_backend or self.detector_backend,
+            "feature_dim": self.embedding_pipeline.profile.feature_dim,
         }
-
-        # Add face model info if face embeddings were generated
+        face_model_info = None
         if generate_face_embeddings and face_generator:
-            response["face_model_info"] = {
+            face_model_info = {
                 "name": face_model_name,
                 "detector_backend": face_detector_backend,
                 "feature_dim": face_generator.feature_dim,
             }
 
-        # Count multi-modal embeddings
-        multi_modal_count = sum(
-            1 for subject in all_subjects if subject.get("face_embedding") is not None
-        )
-
         logger.info(
             f"Processed {len(normalized_images)} image(s), "
-            f"generated {len(all_subjects)} embedding(s) "
-            f"({multi_modal_count} multi-modal), "
+            f"generated {len(all_subjects)} embedding(s), "
             f"{len(warnings_list)} warning(s)"
         )
 
-        return response
+        return RepresentationResult(
+            subjects=all_subjects,
+            warnings=warnings_list if warnings_list else None,
+            model_info=model_info,
+            face_model_info=face_model_info,
+        )
 
     def verify(
         self,
@@ -608,7 +546,7 @@ class DeepPerson:
         threshold: float | None = None,
         normalization: Literal["base", "resnet", "circle"] = "resnet",
         enforce_detection: bool = True,
-    ) -> dict[str, Any]:
+    ) -> ComparisonResult:
         """
         Verify if two images show the same person.
 
@@ -626,7 +564,7 @@ class DeepPerson:
             enforce_detection: If True, raise error when no person detected; if False, return unverified result
 
         Returns:
-            Dictionary containing:
+            ComparisonResult object containing:
                 - verified: Boolean indicating if same person (distance <= threshold)
                 - distance: Computed distance between embeddings
                 - threshold: Threshold used for verification
@@ -649,10 +587,10 @@ class DeepPerson:
         Examples:
             >>> # From file paths
             >>> result = dp.verify("person1_img1.jpg", "person1_img2.jpg")
-            >>> if result["verified"]:
-            ...     print(f"Same person! Distance: {result['distance']:.4f}")
+            >>> if result.verified:
+            ...     print(f"Same person! Distance: {result.distance:.4f}")
             >>> else:
-            ...     print(f"Different persons. Distance: {result['distance']:.4f}")
+            ...     print(f"Different persons. Distance: {result.distance:.4f}")
             >>>
             >>> # From PIL Images
             >>> from PIL import Image
@@ -706,9 +644,10 @@ class DeepPerson:
             confidence_threshold=0.5,
             generate_face_embeddings=True,
         )
+        embeddings1 = result1.subjects
 
         # Check for detection issues in first image
-        if len(result1["subjects"]) == 0:
+        if len(embeddings1) == 0:
             if enforce_detection:
                 raise ValueError(
                     f"No person detected in first image: {Path(img1_path).name}"
@@ -717,27 +656,27 @@ class DeepPerson:
                 logger.warning(
                     f"No person detected in first image: {Path(img1_path).name}"
                 )
-                return {
-                    "verified": False,
-                    "distance": float("inf"),
-                    "threshold": threshold
+                return ComparisonResult(
+                    verified=False,
+                    distance=float("inf"),
+                    threshold=threshold
                     or self.registry.get_verification_threshold(
                         effective_model, distance_metric
                     ),
-                    "distance_metric": distance_metric,
-                    "model": effective_model,
-                    "detector_backend": detector_backend or self.detector_backend,
-                    "facial_areas": {"img1": None, "img2": None},
-                    "body_distance": float("inf"),
-                    "face_distance": None,
-                    "fusion_score": None,
-                    "used_fusion": False,
-                    "modality_available": {"body": False, "face": False},
-                    "warnings": ["No person detected in first image"],
-                }
+                    distance_metric=distance_metric,
+                    model=effective_model,
+                    detector_backend=detector_backend or self.detector_backend,
+                    facial_areas={"img1": None, "img2": None},
+                    body_distance=float("inf"),
+                    face_distance=None,
+                    fusion_score=None,
+                    used_fusion=False,
+                    modality_available={"body": False, "face": False},
+                    warnings=["No person detected in first image"],
+                )
 
-        if len(result1["subjects"]) > 1:
-            warning = f"Multiple persons detected in first image ({len(result1['subjects'])}), using first detection"
+        if len(embeddings1) > 1:
+            warning = f"Multiple persons detected in first image ({len(embeddings1)}), using first detection"
             logger.warning(warning)
             warnings_list.append(warning)
 
@@ -749,9 +688,10 @@ class DeepPerson:
             confidence_threshold=0.5,
             generate_face_embeddings=True,
         )
+        embeddings2 = result2.subjects
 
         # Check for detection issues in second image
-        if len(result2["subjects"]) == 0:
+        if len(embeddings2) == 0:
             if enforce_detection:
                 raise ValueError(
                     f"No person detected in second image: {Path(img2_path).name}"
@@ -760,44 +700,44 @@ class DeepPerson:
                 logger.warning(
                     f"No person detected in second image: {Path(img2_path).name}"
                 )
-                return {
-                    "verified": False,
-                    "distance": float("inf"),
-                    "threshold": threshold
+                return ComparisonResult(
+                    verified=False,
+                    distance=float("inf"),
+                    threshold=threshold
                     or self.registry.get_verification_threshold(
                         effective_model, distance_metric
                     ),
-                    "distance_metric": distance_metric,
-                    "model": effective_model,
-                    "detector_backend": detector_backend or self.detector_backend,
-                    "facial_areas": {
-                        "img1": result1["subjects"][0]["metadata"]["bbox"],
+                    distance_metric=distance_metric,
+                    model=effective_model,
+                    detector_backend=detector_backend or self.detector_backend,
+                    facial_areas={
+                        "img1": embeddings1[0].bbox,
                         "img2": None,
                     },
-                    "body_distance": float("inf"),
-                    "face_distance": None,
-                    "fusion_score": None,
-                    "used_fusion": False,
-                    "modality_available": {"body": True, "face": False},
-                    "warnings": ["No person detected in second image"],
-                }
+                    body_distance=float("inf"),
+                    face_distance=None,
+                    fusion_score=None,
+                    used_fusion=False,
+                    modality_available={"body": True, "face": False},
+                    warnings=["No person detected in second image"],
+                )
 
-        if len(result2["subjects"]) > 1:
-            warning = f"Multiple persons detected in second image ({len(result2['subjects'])}), using first detection"
+        if len(embeddings2) > 1:
+            warning = f"Multiple persons detected in second image ({len(embeddings2)}), using first detection"
             logger.warning(warning)
             warnings_list.append(warning)
 
         # Extract embeddings (use first detection from each image)
-        embedding1 = result1["subjects"][0]["embedding"]
-        embedding2 = result2["subjects"][0]["embedding"]
+        embedding1 = embeddings1[0].embedding_vector
+        embedding2 = embeddings2[0].embedding_vector
 
         # Extract face embeddings if available
-        face_embedding1 = result1["subjects"][0].get("face_embedding")
-        face_embedding2 = result2["subjects"][0].get("face_embedding")
+        face_embedding1 = embeddings1[0].face_embedding
+        face_embedding2 = embeddings2[0].face_embedding
 
         # Extract facial areas for response
-        facial_area1 = result1["subjects"][0]["metadata"]["bbox"]
-        facial_area2 = result2["subjects"][0]["metadata"]["bbox"]
+        facial_area1 = embeddings1[0].bbox
+        facial_area2 = embeddings2[0].bbox
 
         # Initialize fusion scorer
         fusion_scorer = FusionScorer()
@@ -871,33 +811,29 @@ class DeepPerson:
             )
 
         # Build response with enhanced structure
-        response = {
-            "verified": verified,
-            "distance": float(body_distance),  # Maintain backward compatibility
-            "threshold": float(threshold),
-            "distance_metric": distance_metric,
-            "model": effective_model,
-            "detector_backend": detector_backend or self.detector_backend,
-            "facial_areas": {"img1": facial_area1, "img2": facial_area2},
-            # Enhanced fusion fields
-            "body_distance": float(body_distance),
-            "face_distance": float(face_distance)
+        response = ComparisonResult(
+            verified=verified,
+            distance=float(body_distance),
+            threshold=float(threshold),
+            distance_metric=distance_metric,
+            model=effective_model,
+            detector_backend=detector_backend or self.detector_backend,
+            facial_areas={"img1": facial_area1, "img2": facial_area2},
+            body_distance=float(body_distance),
+            face_distance=float(face_distance)
             if face_distance is not None
             else None,
-            "fusion_score": float(fusion_score) if fusion_score is not None else None,
-            "face_weight": fusion_metadata.get("face_weight", 0.5)
+            fusion_score=float(fusion_score) if fusion_score is not None else None,
+            face_weight=fusion_metadata.get("face_weight", 0.5)
             if used_fusion
             else 0.5,
-            "body_weight": fusion_metadata.get("body_weight", 0.5)
+            body_weight=fusion_metadata.get("body_weight", 0.5)
             if used_fusion
             else 0.5,
-            "used_fusion": used_fusion,
-            "modality_available": modality_available,
-        }
-
-        # Add warnings if any
-        if warnings_list:
-            response["warnings"] = warnings_list
+            used_fusion=used_fusion,
+            modality_available=modality_available,
+            warnings=warnings_list if warnings_list else None,
+        )
 
         return response
 
