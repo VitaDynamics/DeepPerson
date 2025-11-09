@@ -176,7 +176,11 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(pil_img)
 
-        assert isinstance(result, list)
+        from src.entities import RepresentationResult
+
+        assert isinstance(result, RepresentationResult)
+        assert isinstance(result.subjects, list)
+        assert isinstance(result.model_info, dict)
 
         # Verify detector was called with PIL Image
         mock_dp.detector.detect.assert_called_once()
@@ -189,7 +193,10 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(numpy_img)
 
-        assert isinstance(result, list)
+        from src.entities import RepresentationResult
+
+        assert isinstance(result, RepresentationResult)
+        assert isinstance(result.subjects, list)
 
     def test_represent_batch_pil_images(self, mock_dp):
         """Test represent() with list of PIL Images."""
@@ -197,7 +204,9 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(pil_images)
 
-        assert isinstance(result, list)
+        from src.entities import RepresentationResult
+
+        assert isinstance(result, RepresentationResult)
         # With batch processing, detect_batch should be called once
         mock_dp.detector.detect_batch.assert_called_once()
 
@@ -209,7 +218,9 @@ class TestRepresentImageInputs:
 
         result = mock_dp.represent(numpy_images)
 
-        assert isinstance(result, list)
+        from src.entities import RepresentationResult
+
+        assert isinstance(result, RepresentationResult)
         # With batch processing, detect_batch should be called once
         mock_dp.detector.detect_batch.assert_called_once()
 
@@ -242,13 +253,20 @@ class TestVerifyImageInputs:
 
             # Mock represent() to return fake embeddings
             def mock_represent(*args, **kwargs):
-                return [
-                    Mock(
-                        embedding_vector=np.random.rand(512).astype(np.float32),
-                        face_embedding=None,
-                        bbox=[0, 0, 100, 100],
-                    )
-                ]
+                from src.entities import RepresentationResult
+
+                return RepresentationResult(
+                    subjects=[
+                        Mock(
+                            embedding_vector=np.random.rand(512).astype(np.float32),
+                            face_embedding=None,
+                            bbox=[0, 0, 100, 100],
+                        )
+                    ],
+                    warnings=None,
+                    model_info={"name": "test_model"},
+                    face_model_info=None,
+                )
 
             dp.represent = Mock(side_effect=mock_represent)
             dp.registry = Mock()
@@ -333,7 +351,9 @@ class TestBatchRepresentImageInputs:
 
         result = mock_dp.represent(pil_images)
 
-        assert isinstance(result, list)
+        from src.entities import RepresentationResult
+
+        assert isinstance(result, RepresentationResult)
         # With batch processing and detect_batch available, it should be called once
         mock_dp.detector.detect_batch.assert_called_once()
 
@@ -345,7 +365,9 @@ class TestBatchRepresentImageInputs:
 
         result = mock_dp.represent(numpy_images)
 
-        assert isinstance(result, list)
+        from src.entities import RepresentationResult
+
+        assert isinstance(result, RepresentationResult)
         # With batch processing and detect_batch available, it should be called once
         # (Note: The mock returns 3 empty lists, but we're only sending 2 images)
         # So we need to update the mock to match the input
@@ -363,8 +385,10 @@ class TestBatchRepresentImageInputs:
         """Test represent() with empty list returns empty results."""
         result = mock_dp.represent([])
 
-        assert isinstance(result, list)
-        assert len(result) == 0
+        from src.entities import RepresentationResult
+
+        assert isinstance(result, RepresentationResult)
+        assert len(result.subjects) == 0
 
 
 class TestSourceIDGeneration:
@@ -418,8 +442,8 @@ class TestSourceIDGeneration:
 
         result = mock_dp.represent(pil_img)
 
-        assert len(result) > 0
-        source_id = result[0].source_image_id
+        assert len(result.subjects) > 0
+        source_id = result.subjects[0].source_image_id
         assert source_id.startswith("in_memory_")
 
     def test_source_id_for_numpy_array(self, mock_dp):
@@ -428,8 +452,8 @@ class TestSourceIDGeneration:
 
         result = mock_dp.represent(numpy_img)
 
-        assert len(result) > 0
-        source_id = result[0].source_image_id
+        assert len(result.subjects) > 0
+        source_id = result.subjects[0].source_image_id
         assert source_id.startswith("in_memory_")
 
     def test_source_id_uniqueness(self):

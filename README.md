@@ -21,6 +21,7 @@ dp = DeepPerson()
 
 # Generate embeddings
 result = dp.represent("person.jpg")
+print(f"Total subjects detected: {len(result.subjects)}")
 
 # Verify if two images show the same person
 result = dp.verify("person1.jpg", "person2.jpg")
@@ -28,7 +29,7 @@ print(f"Same person: {result.verified}")
 
 # Batch processing - multiple images at once
 results = dp.represent(["person1.jpg", "person2.jpg", "person3.jpg"])
-print(f"Total subjects detected: {len(results)}")
+print(f"Total subjects detected: {len(results.subjects)}")
 ```
 
 ## Features

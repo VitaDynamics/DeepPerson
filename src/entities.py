@@ -525,3 +525,20 @@ class ComparisonResult:
     used_fusion: bool
     modality_available: dict
     warnings: list[str] | None
+
+
+@dataclass
+class RepresentationResult:
+    """
+    Result of a representation operation.
+    Attributes:
+        subjects: A list of PersonEmbedding objects.
+        warnings: A list of warnings.
+        model_info: The model information.
+        face_model_info: The face model information.
+    """
+
+    subjects: list[PersonEmbedding]
+    warnings: list[str] | None
+    model_info: dict
+    face_model_info: dict | None

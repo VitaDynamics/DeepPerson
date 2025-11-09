@@ -69,7 +69,7 @@ def main() -> None:
         generate_face_embeddings=True,
     )
 
-    subjects = representation
+    subjects = representation.subjects
     if not subjects:
         print("❌ No persons detected in the sample image.")
         return
@@ -83,6 +83,17 @@ def main() -> None:
         print(f"   Face embedding:  {face_embedding.shape} ✓")
     else:
         print("   Face embedding:  Not available")
+
+    print("\n📊 Model Information:")
+    print(f"   Model: {representation.model_info['name']}")
+    print(f"   Device: {representation.model_info['device']}")
+    print(f"   Feature Dim: {representation.model_info['feature_dim']}")
+
+    if representation.face_model_info:
+        print(f"\n   Face Model: {representation.face_model_info['name']}")
+        print(
+            f"   Face Feature Dim: {representation.face_model_info['feature_dim']}"
+        )
 
     # Show some metadata
     print("\n📋 Sample Metadata:")
@@ -146,12 +157,18 @@ def main() -> None:
     )
 
     print("\n✓ Batch processing complete!")
-    print(f"   Total subjects detected: {len(batch_result)}")
+    print(f"   Total subjects detected: {len(batch_result.subjects)}")
+
+    # Show model info
+    print("\n📊 Model Information:")
+    print(f"   Model: {batch_result.model_info['name']}")
+    print(f"   Device: {batch_result.model_info['device']}")
+    print(f"   Feature Dim: {batch_result.model_info['feature_dim']}")
 
     # Show per-image results
     print("\n📋 Subjects Detected (by source image):")
     subjects_by_image = {}
-    for subject in batch_result:
+    for subject in batch_result.subjects:
         source = subject.source_image_id or "unknown"
         if source not in subjects_by_image:
             subjects_by_image[source] = []

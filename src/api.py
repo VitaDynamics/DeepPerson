@@ -18,7 +18,7 @@ from PIL import Image
 from .detectors import DetectorFactory, PersonDetector
 from .distance import compute_distance
 from .embeddings import BodyEmbeddingGenerator
-from .entities import ComparisonResult, PersonEmbedding
+from .entities import ComparisonResult, PersonEmbedding, RepresentationResult
 from .fusion import FusionScorer
 from .registry import get_registry
 from .utils import select_device
@@ -182,7 +182,7 @@ class DeepPerson:
         face_model_name: str = "Facenet",
         face_detector_backend: str = "opencv",
         return_multi_modal: bool = False,
-    ) -> list[PersonEmbedding]:
+    ) -> RepresentationResult:
         """
         Generate person embeddings from image(s) with optional multi-modal support.
 
@@ -201,39 +201,39 @@ class DeepPerson:
             return_multi_modal: Return multi-modal PersonEmbedding objects
 
         Returns:
-            A list of PersonEmbedding objects, one for each detected person.
+            A RepresentationResult object containing the embeddings and metadata.
 
         Examples:
             >>> # From file path
-            >>> embeddings = dp.represent("person.jpg")
-            >>> print(f"Detected {len(embeddings)} person(s)")
+            >>> result = dp.represent("person.jpg")
+            >>> print(f"Detected {len(result.subjects)} person(s)")
             >>>
             >>> # From PIL Image
             >>> from PIL import Image
             >>> pil_img = Image.open("person.jpg")
-            >>> embeddings = dp.represent(pil_img)
+            >>> result = dp.represent(pil_img)
             >>>
             >>> # From NumPy array
             >>> import numpy as np
             >>> numpy_img = np.array(Image.open("person.jpg"))
-            >>> embeddings = dp.represent(numpy_img)
+            >>> result = dp.represent(numpy_img)
             >>>
             >>> # Multi-modal body+face embeddings (any input type)
-            >>> embeddings = dp.represent(
+            >>> result = dp.represent(
             ...     pil_img,
             ...     generate_face_embeddings=True,
             ...     face_model_name="Facenet"
             ... )
-            >>> for embedding in embeddings:
+            >>> for embedding in result.subjects:
             ...     body_emb = embedding.embedding_vector  # Body embedding
             ...     face_emb = embedding.face_embedding  # Face embedding (if detected)
             ...     print(f"Body: {body_emb.shape}, Face: {face_emb.shape if face_emb is not None else 'None'}")
             >>>
             >>> # Batch processing (all same type)
-            >>> embeddings = dp.represent([pil_img1, pil_img2, pil_img3])
+            >>> result = dp.represent([pil_img1, pil_img2, pil_img3])
             >>>
             >>> # Batch with paths
-            >>> embeddings = dp.represent(["img1.jpg", "img2.jpg"], generate_face_embeddings=True)
+            >>> result = dp.represent(["img1.jpg", "img2.jpg"], generate_face_embeddings=True)
         """
         # Normalize input to list and validate consistency
         if isinstance(img_path, (str, Path, Image.Image, np.ndarray)):
@@ -509,13 +509,32 @@ class DeepPerson:
                     all_subjects.append(embedding)
 
         # Build response
+        model_info = {
+            "name": self.model_name,
+            "device": str(self.device),
+            "detector_backend": detector_backend or self.detector_backend,
+            "feature_dim": self.embedding_pipeline.profile.feature_dim,
+        }
+        face_model_info = None
+        if generate_face_embeddings and face_generator:
+            face_model_info = {
+                "name": face_model_name,
+                "detector_backend": face_detector_backend,
+                "feature_dim": face_generator.feature_dim,
+            }
+
         logger.info(
             f"Processed {len(normalized_images)} image(s), "
             f"generated {len(all_subjects)} embedding(s), "
             f"{len(warnings_list)} warning(s)"
         )
 
-        return all_subjects
+        return RepresentationResult(
+            subjects=all_subjects,
+            warnings=warnings_list if warnings_list else None,
+            model_info=model_info,
+            face_model_info=face_model_info,
+        )
 
     def verify(
         self,
@@ -618,13 +637,14 @@ class DeepPerson:
         warnings_list = []
 
         # Process first image
-        embeddings1 = self.represent(
+        result1 = self.represent(
             img_path=img1_path,
             detector_backend=detector_backend,
             normalization=normalization,
             confidence_threshold=0.5,
             generate_face_embeddings=True,
         )
+        embeddings1 = result1.subjects
 
         # Check for detection issues in first image
         if len(embeddings1) == 0:
@@ -661,13 +681,14 @@ class DeepPerson:
             warnings_list.append(warning)
 
         # Process second image
-        embeddings2 = self.represent(
+        result2 = self.represent(
             img_path=img2_path,
             detector_backend=detector_backend,
             normalization=normalization,
             confidence_threshold=0.5,
             generate_face_embeddings=True,
         )
+        embeddings2 = result2.subjects
 
         # Check for detection issues in second image
         if len(embeddings2) == 0:
