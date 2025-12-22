@@ -49,6 +49,9 @@ def main() -> None:
     # Initialize DeepPerson
     print("🔧 Initializing DeepPerson...")
     dp = DeepPerson()
+    # Explicitly warmup (optional, but good for performance)
+    print("   Running warmup...")
+    dp.warmup()
     print(f"   ✓ Model: {dp.model_name}")
     print(f"   ✓ Device: {dp.device}")
     print(f"   ✓ Detector: {dp.detector_backend}")

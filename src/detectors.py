@@ -225,6 +225,9 @@ class UltralyticsDetector(PersonDetector):
         Note:
             Uses Ultralytics YOLO batch inference for better performance.
         """
+        if not images:
+            return []
+
         # Load all images
         loaded_images = [self._load_image(img) for img in images]
 

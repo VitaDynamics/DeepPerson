@@ -58,6 +58,7 @@ class DeepPerson:
         model_name: str = "resnet50_circle_dg",
         device: str | torch.device | None = None,
         detector_backend: str = "yolo",
+        cache_dir: str | Path | None = None,
     ):
         """
         Initialize DeepPerson with specified model and device.
@@ -66,6 +67,7 @@ class DeepPerson:
             model_name: Name of the backbone model to use
             device: Device to run on ("cuda", "cpu", torch.device, or None for auto-detection)
             detector_backend: Person detection backend ('yolo', 'ultralytics', 'fasterrcnn', 'torchvision')
+            cache_dir: Directory to store model weights (if None, uses default)
         """
         self.model_name = model_name
 
@@ -79,25 +81,83 @@ class DeepPerson:
 
         self.detector_backend = detector_backend
 
-        # Initialize components
-        logger.info(
-            f"Initializing DeepPerson: model={model_name}, device={self.device}, detector={detector_backend}"
-        )
+        # Handle cache directory
+        if cache_dir:
+            self.cache_dir = Path(cache_dir)
+            import os
 
-        # Initialize detector
-        self.detector: PersonDetector = DetectorFactory.create_detector(
-            backend=detector_backend, device=self.device
-        )
+            # Set DeepFace home directory environment variable
+            os.environ["DEEPFACE_HOME"] = str(self.cache_dir)
 
-        # Initialize embedding pipeline
-        self.embedding_pipeline = BodyEmbeddingGenerator(
-            model_name=model_name, device=self.device
-        )
+            # Update ModelManager's cache directory
+            from .model_manager import get_model_manager
+
+            get_model_manager().set_cache_dir(self.cache_dir)
+        else:
+            self.cache_dir = None
+
+        # Components are lazily initialized
+        self.detector: PersonDetector | None = None
+        self.embedding_pipeline: BodyEmbeddingGenerator | None = None
 
         # Get registry for threshold lookups
         self.registry = get_registry()
 
-        logger.info("DeepPerson initialized successfully")
+        logger.info(
+            f"Initialized DeepPerson (lazy): model={model_name}, device={self.device}, "
+            f"detector={detector_backend}, cache_dir={cache_dir}"
+        )
+
+    def _ensure_initialized(self) -> None:
+        """Ensure that detector and embedding pipeline are initialized."""
+        if self.detector is not None and self.embedding_pipeline is not None:
+            return
+
+        logger.info("Initializing components (lazy init triggered)...")
+
+        # Initialize detector
+        if self.detector is None:
+            self.detector = DetectorFactory.create_detector(
+                backend=self.detector_backend, device=self.device
+            )
+
+        # Initialize embedding pipeline
+        if self.embedding_pipeline is None:
+            self.embedding_pipeline = BodyEmbeddingGenerator(
+                model_name=self.model_name, device=self.device
+            )
+
+        logger.info("DeepPerson components initialized successfully")
+
+    def warmup(self, face_model_name: str | None = None) -> None:
+        """
+        Warmup the model by downloading and loading weights.
+
+        This forces initialization of the body model and detector, and optionally
+        downloads and loads the face model.
+
+        Args:
+            face_model_name: Name of the face model to warmup (optional)
+        """
+        logger.info("Warming up DeepPerson models...")
+
+        # Initialize body model and detector
+        self._ensure_initialized()
+
+        # Warmup face model if requested
+        if face_model_name:
+            logger.info(f"Warming up face model: {face_model_name}")
+            try:
+                from deepface import DeepFace
+
+                # Build model to trigger download and load into memory
+                DeepFace.build_model(model_name=face_model_name)
+                logger.info(f"Face model {face_model_name} warmed up successfully")
+            except ImportError:
+                logger.warning("DeepFace not installed, skipping face model warmup")
+            except Exception as e:
+                logger.error(f"Failed to warmup face model {face_model_name}: {e}")
+                # We don't raise here to allow body model usage even if face model fails
 
     @staticmethod
     def _normalize_image(img_input: ImageInput) -> tuple[Image.Image, str]:
@@ -235,6 +295,9 @@ class DeepPerson:
             >>> # Batch with paths
             >>> result = dp.represent(["img1.jpg", "img2.jpg"], generate_face_embeddings=True)
         """
+        # Ensure components are initialized
+        self._ensure_initialized()
+
         # Normalize input to list and validate consistency
         if isinstance(img_path, (str, Path, Image.Image, np.ndarray)):
             input_list = [img_path]
@@ -266,6 +329,8 @@ class DeepPerson:
                 backend=detector_backend, device=self.device
             )
         else:
+            # self.detector is guaranteed to be not None by _ensure_initialized()
+            assert self.detector is not None
             detector = self.detector
 
         # Create face embedding generator if needed
