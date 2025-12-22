@@ -20,6 +20,7 @@ from .distance import compute_distance
 from .embeddings import BodyEmbeddingGenerator
 from .entities import ComparisonResult, PersonEmbedding, RepresentationResult
 from .fusion import FusionScorer
+from .model_manager import ModelManager
 from .registry import get_registry
 from .utils import select_device
 
@@ -84,17 +85,11 @@ class DeepPerson:
         # Handle cache directory
         if cache_dir:
             self.cache_dir = Path(cache_dir)
-            import os
-
-            # Set DeepFace home directory environment variable
-            os.environ["DEEPFACE_HOME"] = str(self.cache_dir)
-
-            # Update ModelManager's cache directory
-            from .model_manager import get_model_manager
-
-            get_model_manager().set_cache_dir(self.cache_dir)
         else:
             self.cache_dir = None
+
+        # Create dedicated ModelManager for this instance
+        self.model_manager = ModelManager(cache_dir=self.cache_dir)
 
         # Components are lazily initialized
         self.detector: PersonDetector | None = None
@@ -118,13 +113,17 @@ class DeepPerson:
         # Initialize detector
         if self.detector is None:
             self.detector = DetectorFactory.create_detector(
-                backend=self.detector_backend, device=self.device
+                backend=self.detector_backend,
+                device=self.device,
+                model_manager=self.model_manager,
             )
 
         # Initialize embedding pipeline
         if self.embedding_pipeline is None:
             self.embedding_pipeline = BodyEmbeddingGenerator(
-                model_name=self.model_name, device=self.device
+                model_name=self.model_name,
+                device=self.device,
+                model_manager=self.model_manager,
             )
 
         logger.info("DeepPerson components initialized successfully")
@@ -147,6 +146,13 @@ class DeepPerson:
         # Warmup face model if requested
         if face_model_name:
             logger.info(f"Warming up face model: {face_model_name}")
+            import os
+
+            # Set DeepFace home locally if cache_dir is set
+            old_home = os.environ.get("DEEPFACE_HOME")
+            if self.cache_dir:
+                os.environ["DEEPFACE_HOME"] = str(self.cache_dir)
+
             try:
                 from deepface import DeepFace
 
@@ -158,6 +164,13 @@ class DeepPerson:
             except Exception as e:
                 logger.error(f"Failed to warmup face model {face_model_name}: {e}")
                 # We don't raise here to allow body model usage even if face model fails
+            finally:
+                # Restore environment variable
+                if self.cache_dir:
+                    if old_home is None:
+                        del os.environ["DEEPFACE_HOME"]
+                    else:
+                        os.environ["DEEPFACE_HOME"] = old_home
 
     @staticmethod
     def _normalize_image(img_input: ImageInput) -> tuple[Image.Image, str]:
@@ -329,8 +342,11 @@ class DeepPerson:
                 backend=detector_backend, device=self.device
             )
         else:
-            # self.detector is guaranteed to be not None by _ensure_initialized()
-            assert self.detector is not None
+            # Ensure detector is initialized
+            if self.detector is None:
+                raise RuntimeError(
+                    "DeepPerson detector not initialized; call warmup() or use represent/verify first."
+                )
             detector = self.detector
 
         # Create face embedding generator if needed
@@ -344,6 +360,7 @@ class DeepPerson:
                     model_name=face_model_name,
                     detector_backend=face_detector_backend,
                     enforce_detection=False,
+                    cache_dir=self.cache_dir,
                 )
                 logger.info(f"Face embedding generator ready: {face_model_name}")
             except ImportError:

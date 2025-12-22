@@ -11,6 +11,7 @@ Reference:
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -199,6 +200,7 @@ def load_model(
     stride: int = 2,
     ibn: bool = False,
     use_model_manager: bool = True,
+    model_manager: Any = None,
 ) -> nn.Module:
     """
     Load ft_net model for inference.
@@ -212,6 +214,7 @@ def load_model(
         stride: Layer4 stride (1 for high-res features, 2 for standard)
         ibn: Whether the weights use IBN-Net architecture
         use_model_manager: Whether to use model_manager for automatic download
+        model_manager: Optional ModelManager instance to use
 
     Returns:
         Loaded PyTorch model in eval mode
@@ -222,20 +225,22 @@ def load_model(
     """
     # Use model manager to ensure weights are available
     if use_model_manager and weights_path is None:
-        try:
-            from ..model_manager import get_model_manager
+        if model_manager is None:
+            try:
+                from ..model_manager import get_model_manager
 
-            model_manager = get_model_manager()
-            weights_path = model_manager.ensure_backbone_weights("resnet50_circle_dg")
-
-        except ImportError:
-            logger.warning(
-                "model_manager not available, falling back to manual weights_path"
-            )
-            if weights_path is None:
-                raise ValueError(
-                    "weights_path must be provided when model_manager is not available"
+                model_manager = get_model_manager()
+            except ImportError:
+                logger.warning(
+                    "model_manager not available, falling back to manual weights_path"
                 )
+                if weights_path is None:
+                    raise ValueError(
+                        "weights_path must be provided when model_manager is not available"
+                    )
+
+        if model_manager:
+            weights_path = model_manager.ensure_backbone_weights("resnet50_circle_dg")
     else:
         logger.info(f"Loading ft_net from {weights_path}")
 
