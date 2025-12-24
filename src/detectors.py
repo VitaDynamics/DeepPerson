@@ -9,6 +9,7 @@ Provides detector backends for locating persons in images:
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -123,13 +124,19 @@ class UltralyticsDetector(PersonDetector):
         https://docs.ultralytics.com/tasks/detect/
     """
 
-    def __init__(self, device: torch.device, model_name: str = "yolov8n.pt"):
+    def __init__(
+        self,
+        device: torch.device,
+        model_name: str = "yolov8n.pt",
+        model_manager: Any = None,
+    ):
         """
         Initialize Ultralytics YOLO detector.
 
         Args:
             device: torch.device for inference
             model_name: YOLO model variant (yolov8n, yolov8s, yolov8m, yolov8l, yolov8x)
+            model_manager: Optional ModelManager instance
         """
         self.device = device
         self.model_name = model_name
@@ -143,9 +150,11 @@ class UltralyticsDetector(PersonDetector):
             )
 
         # Ensure model weights are available using model manager
-        from .model_manager import get_model_manager
+        if model_manager is None:
+            from .model_manager import get_model_manager
 
-        model_manager = get_model_manager()
+            model_manager = get_model_manager()
+
         weights_path = model_manager.ensure_yolo_weights(model_name)
 
         # Load YOLO model with managed weights
@@ -225,6 +234,9 @@ class UltralyticsDetector(PersonDetector):
         Note:
             Uses Ultralytics YOLO batch inference for better performance.
         """
+        if not images:
+            return []
+
         # Load all images
         loaded_images = [self._load_image(img) for img in images]
 
@@ -434,7 +446,11 @@ class DetectorFactory:
 
     @classmethod
     def create_detector(
-        cls, backend: str = "yolo", device: torch.device | None = None, **kwargs
+        cls,
+        backend: str = "yolo",
+        device: torch.device | None = None,
+        model_manager: Any = None,
+        **kwargs,
     ) -> PersonDetector:
         """
         Create a person detector instance.
@@ -442,6 +458,7 @@ class DetectorFactory:
         Args:
             backend: Detector backend ('yolo', 'ultralytics', 'fasterrcnn', 'torchvision')
             device: torch.device for inference (auto-detected if None)
+            model_manager: Optional ModelManager instance
             **kwargs: Additional arguments for detector initialization
 
         Returns:
@@ -465,6 +482,12 @@ class DetectorFactory:
 
         # Create detector
         detector_class = cls._BACKENDS[backend_lower]
+
+        if backend_lower in ("yolo", "ultralytics"):
+            return detector_class(
+                device=device, model_manager=model_manager, **kwargs
+            )
+
         return detector_class(device=device, **kwargs)
 
     @classmethod

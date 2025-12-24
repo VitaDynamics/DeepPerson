@@ -73,6 +73,20 @@ class ModelManager:
         # Initialize YOLO manager
         self.yolo_manager = YOLOManager(self.cache_dir)
 
+    def set_cache_dir(self, cache_dir: str | Path) -> None:
+        """
+        Set a new cache directory.
+
+        Args:
+            cache_dir: New cache directory path
+        """
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Updated cache directory to: {self.cache_dir}")
+
+        # Re-initialize YOLO manager with new cache dir
+        self.yolo_manager = YOLOManager(self.cache_dir)
+
     def is_backbone_file_available(self, name: str) -> bool:
         """
         Check if the backbone model file exists based on NAME_WEIGHT_MAPPING.

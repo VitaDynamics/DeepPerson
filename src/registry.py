@@ -158,7 +158,11 @@ class ModelRegistry:
         return list(self._profiles.keys())
 
     def load_model(
-        self, model_name: str, device: torch.device, force_reload: bool = False
+        self,
+        model_name: str,
+        device: torch.device,
+        force_reload: bool = False,
+        model_manager: Any = None,
     ) -> torch.nn.Module:
         """
         Load a model instance with caching.
@@ -167,6 +171,7 @@ class ModelRegistry:
             model_name: Model identifier
             device: Target device for model
             force_reload: Force reload even if cached
+            model_manager: Optional ModelManager instance
 
         Returns:
             Loaded PyTorch model
@@ -187,7 +192,7 @@ class ModelRegistry:
 
         # Load model from profile
         logger.info(f"Loading model '{model_name}' on device '{device}'")
-        model = self._load_model_from_profile(profile, device)
+        model = self._load_model_from_profile(profile, device, model_manager)
 
         # Cache the model
         self._model_cache[cache_key] = model
@@ -196,7 +201,7 @@ class ModelRegistry:
         return model
 
     def _load_model_from_profile(
-        self, profile: ModelProfile, device: torch.device
+        self, profile: ModelProfile, device: torch.device, model_manager: Any = None
     ) -> torch.nn.Module:
         """
         Load model from profile configuration.
@@ -204,6 +209,7 @@ class ModelRegistry:
         Args:
             profile: ModelProfile with model configuration
             device: Target device
+            model_manager: Optional ModelManager instance
 
         Returns:
             Loaded PyTorch model in eval mode
@@ -225,6 +231,7 @@ class ModelRegistry:
                     weights_path=None,  # Use model_manager
                     device=device,
                     use_model_manager=True,
+                    model_manager=model_manager,
                 )
             else:
                 # Use existing weights

@@ -7,7 +7,7 @@ Supports batch processing for efficiency.
 
 import logging
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -39,6 +39,7 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
         model_name: str,
         device: torch.device,
         registry: ModelRegistry | None = None,
+        model_manager: Any = None,
     ):
         """
         Initialize embedding pipeline.
@@ -47,6 +48,7 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
             model_name: Model identifier (e.g., 'resnet50_circle_dg')
             device: torch.device for inference
             registry: ModelRegistry instance (creates one if None)
+            model_manager: Optional ModelManager instance
         """
         self._model_name = model_name
         self.device = device
@@ -62,7 +64,9 @@ class BodyEmbeddingGenerator(EmbeddingGenerator):
         self.profile = registry.get_profile(model_name)
 
         # Load model
-        self.model = registry.load_model(model_name, device)
+        self.model = registry.load_model(
+            model_name, device, model_manager=model_manager
+        )
 
         # Build preprocessing pipeline
         self.preprocess = self._build_preprocessing()

@@ -64,6 +64,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         model_name: str = "Facenet512",  # Default to Facenet512 for better performance
         detector_backend: str = "opencv",
         enforce_detection: bool = False,
+        cache_dir: Path | None = None,
     ):
         """
         Initialize face embedding generator.
@@ -72,6 +73,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
             model_name: DeepFace model to use ('Facenet', 'VGG-Face', 'OpenFace', etc.)
             detector_backend: Face detector backend ('opencv', 'ssd', 'mtcnn', etc.)
             enforce_detection: If True, raise error when no face detected
+            cache_dir: Optional directory for model weights
 
         Raises:
             ImportError: If DeepFace is not installed
@@ -79,6 +81,7 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
         self._model_name = model_name
         self.detector_backend = detector_backend
         self.enforce_detection = enforce_detection
+        self.cache_dir = cache_dir
 
         # Cache feature dimension
         self._feature_dim = self.MODEL_DIMENSIONS.get(model_name, 128)
@@ -186,7 +189,21 @@ class FaceEmbeddingGenerator(EmbeddingGenerator):
             config = self._get_deepface_config()
             from deepface import DeepFace
 
-            result = DeepFace.represent(img_path=image_path, **config)
+            # Set environment variable locally if cache_dir is provided
+            import os
+
+            old_home = os.environ.get("DEEPFACE_HOME")
+            if self.cache_dir:
+                os.environ["DEEPFACE_HOME"] = str(self.cache_dir)
+
+            try:
+                result = DeepFace.represent(img_path=image_path, **config)
+            finally:
+                if self.cache_dir:
+                    if old_home is None:
+                        del os.environ["DEEPFACE_HOME"]
+                    else:
+                        os.environ["DEEPFACE_HOME"] = old_home
 
             # Handle no detection
             if not result or len(result) == 0:
